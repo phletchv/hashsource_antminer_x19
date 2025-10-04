@@ -1,0 +1,37 @@
+################################################################################
+#
+# hashsource_x19
+#
+################################################################################
+
+HASHSOURCE_X19_VERSION = 1.0
+HASHSOURCE_X19_SITE = $(BR2_EXTERNAL_X19_BITMAIN_PATH)/../hashsource_x19
+HASHSOURCE_X19_SITE_METHOD = local
+HASHSOURCE_X19_LICENSE = GPL-2.0
+
+define HASHSOURCE_X19_BUILD_CMDS
+	$(TARGET_MAKE_ENV) $(MAKE) CC="$(TARGET_CC)" \
+		CROSS_COMPILE="$(TARGET_CROSS)" \
+		-C $(@D) all
+endef
+
+define HASHSOURCE_X19_INSTALL_TARGET_CMDS
+	$(INSTALL) -D -m 0755 $(@D)/bin/fan_test \
+		$(TARGET_DIR)/usr/bin/fan_test
+	$(INSTALL) -D -m 0755 $(@D)/bin/psu_test \
+		$(TARGET_DIR)/usr/bin/psu_test
+	$(INSTALL) -D -m 0755 $(@D)/bin/fpga_logger \
+		$(TARGET_DIR)/usr/bin/fpga_logger
+	$(INSTALL) -D -m 0755 $(@D)/bin/hashsource_miner \
+		$(TARGET_DIR)/usr/bin/hashsource_miner
+	if [ -f $(@D)/config/miner.conf ]; then \
+		$(INSTALL) -D -m 0644 $(@D)/config/miner.conf \
+			$(TARGET_DIR)/etc/miner.conf; \
+	fi
+	if [ -f $(@D)/config/S90hashsource ]; then \
+		$(INSTALL) -D -m 0755 $(@D)/config/S90hashsource \
+			$(TARGET_DIR)/etc/init.d/S90hashsource; \
+	fi
+endef
+
+$(eval $(generic-package))
