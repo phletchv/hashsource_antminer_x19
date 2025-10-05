@@ -180,24 +180,27 @@ regs[0x088/4] = 0x8001FFFF;   // Final config
 
 ### PSU Control Architecture
 
-GPIO 1 (MIO_1) controls PSU enable (active-low: 0=ON, 1=OFF).
+**GPIO Control:** GPIO 907 (stock kernel: gpiochip906 + MIO_1) - active-low (0=ON, 1=OFF)
 
-**Power-On Sequence** (from psu_test.c):
+**Power-On Sequence:**
 
-1. Set GPIO 1 = HIGH (disable PSU output)
+1. Set GPIO 907 = HIGH (disable PSU output)
 2. Wait 30 seconds (capacitor discharge) - **CRITICAL on first power-on**
-3. Detect protocol (write 0xF5 to register, read back)
-4. Get PSU version (command 0x02)
+3. Detect protocol (write 0xF5 to register 0x11, read back; fallback to 0x00)
+4. Get PSU version (command 0x02) → version 0x71 on S19 Pro
 5. Set voltage via I2C (command 0x83) while PSU disabled
-6. Set GPIO 1 = LOW (enable PSU output)
-7. Wait 500ms for voltage stabilization
+6. Set GPIO 907 = LOW (enable PSU output)
+7. Wait 2 seconds for voltage stabilization
 
-**Uses FPGA I2C controller**, NOT PS I2C (/dev/i2c-0):
+**FPGA I2C Controller** (NOT PS I2C `/dev/i2c-0`):
 
 - FPGA register 0x0C (word offset, byte offset 0x30)
 - I2C address 0x10 encoded as: `(master=1 << 26) | (slave_high=2 << 20) | (slave_low=0 << 16)`
 
-See `docs/PSU_PROTOCOL.md` for complete protocol documentation.
+**References:**
+
+- `docs/PSU_PROTOCOL.md` - Complete protocol documentation with decompiled sources
+- `hashsource_x19/src/psu_test.c` - Working voltage ramp test (15V→12V→15V)
 
 ### Fan Control
 
@@ -298,8 +301,9 @@ Must perform FPGA initialization sequence first.
 # Fan PWM ramp test (10%-100%, 5% increments, 10 sec each)
 ./bin/fan_test
 
-# PSU voltage control test
-./bin/psu_test 15000  # Set 15.0V (range: 12000-15000 mV)
+# PSU voltage ramp test (15V→12V→15V, 0.5V steps, 3 sec each)
+# Includes 30s power release, protocol detection, version check
+./bin/psu_test
 
 # FPGA register monitoring (for reverse engineering)
 ./bin/fpga_logger output.log
