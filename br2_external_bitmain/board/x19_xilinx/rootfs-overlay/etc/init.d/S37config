@@ -40,8 +40,8 @@ start() {
     fi
 
     # Generate MAC if not found
-    if [ -z "$mac" ] && [ -x /sbin/id2mac ]; then
-        mac=$(/sbin/id2mac)
+    if [ -z "$mac" ] && [ -x /usr/bin/id2mac ]; then
+        mac=$(/usr/bin/id2mac)
         # Save to config for next boot
         if [ -n "$mac" ] && grep -q "/config" /proc/mounts 2>/dev/null; then
             echo "$mac" > /config/mac 2>/dev/null

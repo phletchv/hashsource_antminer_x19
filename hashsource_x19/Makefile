@@ -25,6 +25,7 @@ TARGET = $(BIN_DIR)/hashsource_miner
 FAN_TEST = $(BIN_DIR)/fan_test
 FPGA_LOGGER = $(BIN_DIR)/fpga_logger
 PSU_TEST = $(BIN_DIR)/psu_test
+ID2MAC = $(BIN_DIR)/id2mac
 
 # Source files for main miner
 SRCS = $(SRC_DIR)/main.c \
@@ -40,11 +41,15 @@ LOGGER_SRCS = $(SRC_DIR)/fpga_logger.c
 # Source files for PSU test
 PSU_SRCS = $(SRC_DIR)/psu_test.c
 
+# Source files for id2mac
+ID2MAC_SRCS = $(SRC_DIR)/id2mac.c
+
 # Object files
 OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(SRCS)))
 FAN_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(FAN_SRCS)))
 LOGGER_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(LOGGER_SRCS)))
 PSU_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(PSU_SRCS)))
+ID2MAC_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(ID2MAC_SRCS)))
 
 # Compiler flags
 CFLAGS = -Wall -Wextra -O2 -g
@@ -56,7 +61,7 @@ CFLAGS += -D_GNU_SOURCE
 LDFLAGS = -pthread -lm -lrt
 
 # Default target
-all: dirs $(TARGET) $(FAN_TEST) $(FPGA_LOGGER) $(PSU_TEST)
+all: dirs $(TARGET) $(FAN_TEST) $(FPGA_LOGGER) $(PSU_TEST) $(ID2MAC)
 
 # Create directories
 dirs:
@@ -90,6 +95,14 @@ $(FPGA_LOGGER): $(LOGGER_OBJS)
 $(PSU_TEST): $(PSU_OBJS)
 	@echo "Linking $@"
 	$(CC) $(PSU_OBJS) -o $@ $(LDFLAGS)
+	@echo "Stripping $@"
+	$(STRIP) $@
+	@echo "Build complete: $@"
+
+# Build id2mac
+$(ID2MAC): $(ID2MAC_OBJS)
+	@echo "Linking $@"
+	$(CC) $(ID2MAC_OBJS) -o $@
 	@echo "Stripping $@"
 	$(STRIP) $@
 	@echo "Build complete: $@"

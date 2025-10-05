@@ -24,6 +24,8 @@ define HASHSOURCE_X19_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/usr/bin/fpga_logger
 	$(INSTALL) -D -m 0755 $(@D)/bin/hashsource_miner \
 		$(TARGET_DIR)/usr/bin/hashsource_miner
+	$(INSTALL) -D -m 0755 $(@D)/bin/id2mac \
+		$(TARGET_DIR)/usr/bin/id2mac
 	if [ -f $(@D)/config/miner.conf ]; then \
 		$(INSTALL) -D -m 0644 $(@D)/config/miner.conf \
 			$(TARGET_DIR)/etc/miner.conf; \
