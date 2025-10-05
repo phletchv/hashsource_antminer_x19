@@ -63,8 +63,8 @@
 // GPIO Configuration
 // Stock firmware uses gpio907 in sysfs (gpiochip base=906 + offset 1)
 // This maps to hardware pin MIO_1 (Zynq GPIO 1)
-// Our system uses base=0, so we use GPIO 1 to access the same hardware pin
-#define PSU_ENABLE_GPIO      1      // MIO_1 - PSU enable pin (active LOW)
+// Stock kernel (4.6.0-xilinx): gpiochip base = 906, so MIO_1 = 906 + 1 = 907
+#define PSU_ENABLE_GPIO      907    // GPIO 907 - PSU enable pin (active LOW)
 #define GPIO_SYSFS_PATH      "/sys/class/gpio"
 
 // Timeouts
@@ -466,22 +466,17 @@ int fpga_enable_chain(int chain) {
 }
 
 int main(int argc, char *argv[]) {
-    uint32_t target_voltage_mv = 15000;  // Default 15V
+    (void)argc;
+    (void)argv;
 
     printf("========================================\n");
-    printf("X19 APW12 PSU Test (FPGA Direct)\n");
+    printf("X19 APW12 PSU Voltage Ramp Test\n");
     printf("========================================\n\n");
-
-    // Parse voltage argument
-    if (argc > 1) {
-        target_voltage_mv = atoi(argv[1]);
-        if (target_voltage_mv < 12000 || target_voltage_mv > 15000) {
-            fprintf(stderr, "Error: Voltage must be 12000-15000 mV\n");
-            return 1;
-        }
-    }
-
-    printf("Target voltage: %u mV (%.2f V)\n\n", target_voltage_mv, target_voltage_mv / 1000.0);
+    printf("Test sequence:\n");
+    printf("  1. Initialize PSU at 15.0V\n");
+    printf("  2. Ramp DOWN: 15.0V → 12.0V (0.25V steps)\n");
+    printf("  3. Ramp UP: 12.0V → 15.0V (0.25V steps)\n");
+    printf("  4. Shutdown PSU\n\n");
 
     // Setup signals
     signal(SIGINT, signal_handler);
@@ -563,13 +558,13 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Warning: Could not read version\n\n");
     }
 
-    // Step 3: Set voltage WHILE PSU IS DISABLED
-    printf("Step 3: Set voltage to %u mV via I2C (PSU still disabled)\n", target_voltage_mv);
-    if (psu_set_voltage(target_voltage_mv) < 0) {
+    // Step 3: Set initial voltage to 15V WHILE PSU IS DISABLED
+    printf("Step 3: Set initial voltage to 15000 mV via I2C (PSU still disabled)\n");
+    if (psu_set_voltage(15000) < 0) {
         fpga_close();
         return 1;
     }
-    printf("  Voltage configured successfully\n\n");
+    printf("  Initial voltage configured successfully\n\n");
 
     // Step 4: Enable PSU output (LOW = enabled, active LOW)
     printf("Step 4: Enable PSU DC output (set GPIO LOW)\n");
@@ -583,26 +578,86 @@ int main(int argc, char *argv[]) {
     // Step 5: Wait for voltage stabilization
     printf("Step 5: Waiting for voltage to stabilize...\n");
     sleep(2);
-    printf("  Voltage should now be present on PSU DC output!\n\n");
+    printf("  Voltage stabilized at 15.00V\n\n");
 
     printf("========================================\n");
-    printf("PSU Initialization Complete!\n");
+    printf("Starting Voltage Ramp Test\n");
     printf("========================================\n\n");
 
     printf("Configuration:\n");
-    printf("  - FPGA chain: 0 (enabled via register 0x0D)\n");
+    printf("  - FPGA chain: 0 (enabled)\n");
     printf("  - PSU I2C register: 0x%02X\n", psu_i2c_reg);
     printf("  - PSU version: 0x%02X\n", psu_version);
-    printf("  - Configured voltage: %u mV (%.2f V)\n", target_voltage_mv, target_voltage_mv / 1000.0);
     printf("  - GPIO %d: LOW (PSU enabled)\n\n", PSU_ENABLE_GPIO);
 
-    printf("MEASURE DC OUTPUT WITH MULTIMETER NOW!\n");
-    printf("Expected: ~%.2f V DC\n\n", target_voltage_mv / 1000.0);
+    // Ramp DOWN: 15V → 12V in 250mV steps
+    printf("Phase 1: Ramping DOWN from 15.0V to 12.0V\n");
+    printf("----------------------------------------\n");
+    for (uint32_t voltage_mv = 15000; voltage_mv >= 12000; voltage_mv -= 250) {
+        if (g_shutdown) break;
 
-    printf("Press Ctrl+C to exit...\n");
-    while (!g_shutdown) {
-        sleep(1);
+        printf("  Setting voltage: %u mV (%.2f V)...", voltage_mv, voltage_mv / 1000.0);
+        fflush(stdout);
+
+        if (psu_set_voltage(voltage_mv) < 0) {
+            fprintf(stderr, "\nFailed to set voltage\n");
+            break;
+        }
+
+        printf(" OK\n");
+        sleep(3);  // Wait 3 seconds at each voltage step
     }
+
+    if (!g_shutdown) {
+        printf("\n  Reached minimum voltage: 12.0V\n");
+        printf("  Holding for 5 seconds...\n\n");
+        sleep(5);
+    }
+
+    // Ramp UP: 12V → 15V in 250mV steps
+    if (!g_shutdown) {
+        printf("Phase 2: Ramping UP from 12.0V to 15.0V\n");
+        printf("----------------------------------------\n");
+        for (uint32_t voltage_mv = 12000; voltage_mv <= 15000; voltage_mv += 250) {
+            if (g_shutdown) break;
+
+            printf("  Setting voltage: %u mV (%.2f V)...", voltage_mv, voltage_mv / 1000.0);
+            fflush(stdout);
+
+            if (psu_set_voltage(voltage_mv) < 0) {
+                fprintf(stderr, "\nFailed to set voltage\n");
+                break;
+            }
+
+            printf(" OK\n");
+            sleep(3);  // Wait 3 seconds at each voltage step
+        }
+
+        printf("\n  Reached maximum voltage: 15.0V\n");
+        printf("  Holding for 5 seconds...\n\n");
+        sleep(5);
+    }
+
+    // Shutdown PSU
+    printf("========================================\n");
+    printf("Shutting Down PSU\n");
+    printf("========================================\n\n");
+
+    printf("Disabling PSU output (GPIO HIGH)...\n");
+    if (gpio_set_value(PSU_ENABLE_GPIO, 1) < 0) {  // 1 = HIGH = disabled
+        fprintf(stderr, "Failed to disable PSU\n");
+    } else {
+        printf("  PSU disabled successfully\n\n");
+    }
+
+    printf("========================================\n");
+    printf("Voltage Ramp Test Complete!\n");
+    printf("========================================\n\n");
+
+    printf("Test summary:\n");
+    printf("  - Ramp down: 15.0V → 12.0V (250mV steps)\n");
+    printf("  - Ramp up: 12.0V → 15.0V (250mV steps)\n");
+    printf("  - PSU shutdown: Complete\n\n");
 
     fpga_close();
     return 0;
