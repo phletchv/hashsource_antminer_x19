@@ -2,7 +2,7 @@
  * X19 APW12 PSU Voltage Ramp Test
  *
  * Tests PSU voltage control via FPGA I2C controller with voltage ramping
- * from 15V down to 12V and back up to 15V in 250mV increments.
+ * from 15V down to 12V and back up to 15V in VOLTAGE_STEP increments.
  */
 
 #include <stdio.h>
