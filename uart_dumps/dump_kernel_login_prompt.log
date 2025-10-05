@@ -1,27 +1,36 @@
+Xilinx First Stage Boot Loader
 
-Xilinx First Stage Boot Loader 
-Release 2017.1	Apr 11 2020-21:03:30
-Devcfg driver initialized 
+Release 2017.1	Apr 11 2020-21:03:30
+Devcfg driver initialized
 Silicon Version 3.1
 Boot mode is NAND
 InitNand: Geometry = 0x8
-Nand driver initialized 
-NAND Init Done 
+Nand driver initialized
+
+NAND Init Done
 Flash Base Address: 0xE1000000
 Reboot status register: 0x60400000
 Multiboot Register: 0x0000C000
 Image Start Address: 0x00000000
 Partition Header Offset:0x00000C80
 Partition Count: 3
-EfusePS status bits : 0xC0013C82 
-EfusePS status bits : Write protect enabled
-EfusePS status bits : RSA authentication of fsbl enabled
-EfusePS status bits : 128k CRC check on ROM enabled
-EfusePS status bits : DFT JTAG is enabled
-EfusePS status bits : DFT mode is enabled
-Read RSA Key Hash: 
-3545B6DE1FF44EE4295270CC6D0FF730F861DB9CE32F70F2980619FAF0F34DC1
-fsbl read PS efuse success
+EfusePS status bits : 0xC0013C82
+
+EfusePS status bits : Write protect enabled
+
+EfusePS status bits : RSA authentication of fsbl enabled
+
+EfusePS status bits : 128k CRC check on ROM enabled
+
+EfusePS status bits : DFT JTAG is enabled
+
+EfusePS status bits : DFT mode is enabled
+
+Read RSA Key Hash:
+
+3545B6DE1FF44EE4295270CC6D0FF730F861DB9CE32F70F2980619FAF0F34DC1
+
+fsbl read PS efuse success
 RSA is already enabled for Chip
 SetPpk
 Partition Number: 1
@@ -38,13 +47,13 @@ Section Count: 0x00000001
 Checksum: 0xFFDEA12E
 Bitstream
 RSA Signed
-In FsblHookBeforeBitstreamDload function 
+In FsblHookBeforeBitstreamDload function
 Authentication Done
 PCAP:StatusReg = 0x40000A30
 PCAP:device ready
 PCAP:Clear done
-Level Shifter Value = 0xA 
-Devcfg Status register = 0x40000A30 
+Level Shifter Value = 0xA
+Devcfg Status register = 0x40000A30
 PCAP:Fabric is Initialized done
 PCAP register dump:
 PCAP CTRL 0xF8007000: 0x4C00E07F
@@ -63,10 +72,13 @@ PCAP SW ID 0xF8007030: 0x00000000
 PCAP UNLOCK 0xF8007034: 0x757BDF0D
 PCAP MCTRL 0xF8007080: 0x3C800100
 
-DMA Done ! 
 
-FPGA Done ! 
-In FsblHookAfterBitstreamDload function 
+DMA Done !
+
+
+FPGA Done !
+
+In FsblHookAfterBitstreamDload function
 Partition Number: 2
 Header Dump
 Image Word Len: 0x000224F7
@@ -83,7 +95,7 @@ Application
 RSA Signed
 Authentication Done
 Handoff Address: 0x04000000
-In FsblHookBeforeHandoff function 
+In FsblHookBeforeHandoff function
 SUCCESSFUL_HANDOFF
 FSBL Status = 0x1
 
@@ -92,7 +104,7 @@ U-Boot 2016.07-gdb5d44e-dirty (Apr 26 2020 - 13:27:15 +0800)
 
 Model: Zynq MicroZED Board
 Board: Xilinx Zynq
-DRAM:  
+DRAM:
 dram_init: sys_sdram_size = 0x10000000
 dram_init: sys_sdram_size = 256 MB
 dram_init: gd->ram_size = 0xf000000
@@ -131,7 +143,7 @@ ZYNQ GEM: e000b000, phyaddr 0, interface gmii
 PHY is not detected
 GEM PHY init failed
 No ethernet found.
-Hit any key to stop autoboot:  0 
+Hit any key to stop autoboot:  0
 Copying Linux from SD to RAM...
 reading uEnv.txt
 144 bytes read in 11 ms (12.7 KiB/s)
@@ -148,7 +160,7 @@ U-Boot 2016.07-Xilinkl7-dirty (Dec 10 2018 - 16:28:51 +0800)
 
 Model: Zynq MicroZED Board
 Board: Xilinx Zynq
-DRAM:  
+DRAM:
 dram_init: sys_sdram_size = 0x10000000
 dram_init: sys_sdram_size = 256 MB
 dram_init: gd->ram_size = 0x0f000000
@@ -181,7 +193,7 @@ ZYNQ GEM: e000b000, phyaddr 0, interface mii
 PHY is not detected
 GEM PHY init failed
 No ethernet found.
-Hit any key to stop autoboot:  2  1  0 
+Hit any key to stop autoboot:  2  1  0
 Copying Linux from SD to RAM...
 reading uEnz.txt
 ** Unable to read file uEnz.txt **
@@ -200,7 +212,7 @@ reading uramdisk.image.gz
    Entry Point:  00008000
    Verifying Checksum ... OK
 ## Loading init Ramdisk from Legacy Image at 04000000 ...
-   Image Name:   
+   Image Name:
    Image Type:   ARM Linux RAMDisk Image (uncompressed)
    Data Size:    4967976 Bytes = 4.7 MiB
    Load Address: 00000000
@@ -335,7 +347,8 @@ mmcblk0: mmc0:0001 EITSD 3.75 GiB
 Freeing initrd memory: 4852K
 Freeing unused kernel image (initmem) memory: 1024K
 Run /init as init process
-init started: BusyBox v1.37.0 (2025-09-27 21:14:17 EDT)
+
+init started: BusyBox v1.37.0 (2025-09-27 21:14:17 EDT)
 Starting S19 Pro initialization...
 macb e000b000.ethernet eth0: PHY [e000b000.ethernet-ffffffff:00] driver [Generic PHY] (irq=POLL)
 macb e000b000.ethernet eth0: configuring for phy/gmii link mode
@@ -350,10 +363,13 @@ deleting routers
 adding dns 192.168.0.1
 FPGA device not found - bitstream may not be loaded
 S19 Pro initialization complete
-
+
+
 HashSource S19 Pro Custom Firmware
-s19pro login: root
-Password: 
+
+s19pro login: root
+Password:
 Login incorrect
-login[76]: invalid password for 'root' on 'ttyPS0'
+login[76]: invalid password for 'root' on 'ttyPS0'
+
 s19pro login:  

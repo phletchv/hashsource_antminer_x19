@@ -1,28 +1,3 @@
-Stopping Cgminer daemon: stopped /usr/bin/cgminer (pid 1078)
-no /usr/bin/bmminer found; none killed
-Waiting For bitmain_logrotate To Exit
-bitmain_logrotate Has Been Stopped
-cgminer.
-Stopping Monitor-recobtn daemon: monitor-recobtn.
-Stopping Monitor-ipsig daemon: monitor-ipsig.
-Stopping lighttpd: OK
-Stopping dropbear sshd: OK
-Stopping ntpd: OK
-Saving random seed... urandom stop: failed.
-done.
-Stopping syslogd: OK
-UBIFS (ubi3:0): un-mount UBI device 3
-UBIFS (ubi3:0): background thread "ubifs_bgt3_0" stops
-UBIFS (ubi2:0): un-mount UBI device 2
-UBIFS (ubi2:0): background thread "ubifs_bgt2_0" stops
-UBIFS (ubi0:0): un-mount UBI device 0
-UBIFS (ubi0:0): background thread "ubifs_bgt0_0" stops
-umount: tmpfs busy - remounted read-only
-umount: devtmpfs busy - remounted read-only
-EXT4-fs (ram0): re-mounted. Opts: (null)
-reboot: Restarting system
-�
-
 Xilinx First Stage Boot Loader
 
 Release 2017.1	Apr 11 2020-21:03:30

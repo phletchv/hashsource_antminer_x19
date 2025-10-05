@@ -172,7 +172,7 @@ KERNEL rsa verify success!!!!!
      Type:         RAMDisk Image
      Compression:  gzip compressed
      Data Start:   0x040000c4
-     Data Size:    5963018 Bytes = 5.7 MiB
+     Data Size:    5963431 Bytes = 5.7 MiB
      Architecture: ARM
      OS:           Linux
      Load Address: 0x00000000
@@ -186,7 +186,7 @@ FDT rsa verify success!!!!!
 ## Flattened Device Tree blob at 03000000
    Booting using the fdt blob at 0x3000000
    Loading Kernel Image ... OK
-   Loading Ramdisk to 0d549000, end 0daf8d0a ... OK
+   Loading Ramdisk to 0d549000, end 0daf8ea7 ... OK
    Loading Device Tree to 0d544000, end 0d548f4d ... OK
 
 Starting kernel ...
@@ -373,13 +373,21 @@ VFS: Mounted root (ext4 filesystem) on device 1:0.
 devtmpfs: mounted
 Freeing unused kernel memory: 1024K (c0a00000 - c0b00000)
 
-init started: BusyBox v1.37.0 (2025-10-04 16:20:19 EDT)
-Starting S19 Pro initialization...
+init started: BusyBox v1.37.0 (2025-10-04 19:01:57 EDT)
+Starting X19 initialization...
 random: seedrng urandom read with 0 bits of entropy available
 Saving 2048 bits of non-creditable seed for next boot
 Starting syslogd: OK
 Starting klogd: OK
 Running sysctl: OK
+Starting mdev... OK
+modprobe: invalid option -- 'a'
+BusyBox v1.37.0 (2025-10-04 19:01:57 EDT) multi-call binary.
+
+Usage: modprobe [-rq] MODULE [SYMBOL=VALUE]...
+
+	-r	Remove MODULE
+	-q	Quiet
 Loading FPGA kernel modules: In axi fpga driver!
 request_mem_region OK!
 AXI fpga dev virtual address is 0xcf9a8000
@@ -405,9 +413,9 @@ Starting ifplugd for eth0: OK
 Starting crond: OK
 Starting dropbear sshd: OK
 Starting telnetd: OK
-S19 Pro initialization complete
+X19 initialization complete
 
 
-HashSource S19 Pro
+HashSource X19
 
 (none) login:
