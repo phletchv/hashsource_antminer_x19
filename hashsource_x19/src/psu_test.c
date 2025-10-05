@@ -1,21 +1,14 @@
 /*
- * X19 APW12 PSU Test Program - FPGA Direct Access
+ * X19 APW12 PSU Voltage Ramp Test
  *
- * Tests PSU initialization and voltage control via FPGA I2C controller
- * Replicates stock firmware sequence exactly:
- *   1. GPIO 907 = HIGH (disable PSU)
- *   2. Sleep 30 seconds (power release)
- *   3. Detect protocol and get version
- *   4. Set voltage via FPGA I2C
- *   5. GPIO 907 = LOW (enable PSU output)
- *   6. Verify voltage with multimeter
- *
- * Based on stock firmware analysis: FUN_00019698, FUN_00042138, FUN_00042100
+ * Tests PSU voltage control via FPGA I2C controller with voltage ramping
+ * from 15V down to 12V and back up to 15V in 250mV increments.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -23,642 +16,410 @@
 #include <errno.h>
 #include <signal.h>
 
-// FPGA Configuration
-#define AXI_DEVICE      "/dev/axi_fpga_dev"
-#define AXI_SIZE        0x1200
+// Device paths
+#define AXI_DEVICE          "/dev/axi_fpga_dev"
+#define GPIO_SYSFS_PATH     "/sys/class/gpio"
 
-// FPGA Register Map
-#define FPGA_REG_I2C_CTRL       0x0C    // I2C Controller
-#define FPGA_REG_CHAIN_ENABLE   0x0D    // Chain enable bits (bit 0 = chain 0, bit 1 = chain 1, etc)
+// FPGA configuration
+#define AXI_SIZE            0x1200
+#define REG_I2C_CTRL        0x0C
 
-// FPGA I2C Control Register Bits
-#define FPGA_I2C_READY       (1U << 31)     // Bit 31: Ready for operation
-#define FPGA_I2C_DATA_READY  (0x2U << 30)   // Bits 31-30 = 0b10: Data ready
-#define FPGA_I2C_READ_OP     (1U << 25)     // Bit 25: Read operation
-#define FPGA_I2C_READ_1BYTE  (1U << 19)     // Bit 19: 1-byte read
-#define FPGA_I2C_REGADDR_VALID (1U << 24)   // Bit 24: Register address valid
+// I2C control bits
+#define I2C_READY           (1U << 31)
+#define I2C_DATA_READY      (0x2U << 30)
+#define I2C_READ_OP         (1U << 25)
+#define I2C_READ_1BYTE      (1U << 19)
+#define I2C_REGADDR_VALID   (1U << 24)
 
-// PSU I2C Configuration (from decompiled bmminer FUN_0004a0dc)
-// Stock firmware uses: slave_config = 0x20 = (slave_high=0x02) << 4 | (slave_low=0x00)
-// Then splits it: (0x20 >> 4) << 20 | (0x20 & 0x0E) << 15
-#define PSU_I2C_MASTER       1      // Master bus ID (bit 26)
-#define PSU_I2C_SLAVE_HIGH   0x02   // Slave address high nibble (bits 23-20)
-#define PSU_I2C_SLAVE_LOW    0x00   // Slave address low nibble (bits 17-15, masked with 0x0E)
-// This creates 7-bit I2C address 0x10: (0x02 << 4) | 0x00 = 0x20 >> 1 = 0x10
+// PSU I2C addressing
+#define PSU_I2C_MASTER      1
+#define PSU_I2C_SLAVE_HIGH  0x02
+#define PSU_I2C_SLAVE_LOW   0x00
 
-// PSU Protocol
-#define PSU_REG_LEGACY       0x00
-#define PSU_REG_V2           0x11
-#define PSU_PROTOCOL_DETECT  0xF5
+// PSU protocol
+#define PSU_REG_LEGACY      0x00
+#define PSU_REG_V2          0x11
+#define PSU_DETECT_MAGIC    0xF5
+#define PSU_MAGIC_1         0x55
+#define PSU_MAGIC_2         0xAA
+#define CMD_GET_TYPE        0x02
+#define CMD_SET_VOLTAGE     0x83
 
-#define PSU_MAGIC_1          0x55
-#define PSU_MAGIC_2          0xAA
+// GPIO configuration
+#define PSU_ENABLE_GPIO     907    // Stock kernel: gpiochip906 + MIO_1
 
-// PSU Commands
-#define CMD_GET_VERSION      0x01
-#define CMD_GET_TYPE         0x02
-#define CMD_GET_VOLTAGE      0x03
-#define CMD_SET_VOLTAGE      0x83
-
-// GPIO Configuration
-// Stock firmware uses gpio907 in sysfs (gpiochip base=906 + offset 1)
-// This maps to hardware pin MIO_1 (Zynq GPIO 1)
-// Stock kernel (4.6.0-xilinx): gpiochip base = 906, so MIO_1 = 906 + 1 = 907
-#define PSU_ENABLE_GPIO      907    // GPIO 907 - PSU enable pin (active LOW)
-#define GPIO_SYSFS_PATH      "/sys/class/gpio"
+// Test parameters
+#define VOLTAGE_MIN         12000  // 12.0V
+#define VOLTAGE_MAX         15000  // 15.0V
+#define VOLTAGE_STEP        500    // 0.5V
+#define POWER_RELEASE_SECS  30
+#define VOLTAGE_SETTLE_SECS 2
+#define VOLTAGE_HOLD_SECS   5
+#define RAMP_STEP_SECS      3
 
 // Timeouts
-#define FPGA_I2C_TIMEOUT_MS  1000
-#define PSU_DELAY_AFTER_SEND_MS  400
-#define PSU_DELAY_AFTER_READ_MS  100
+#define I2C_TIMEOUT_MS      1000
+#define PSU_SEND_DELAY_MS   400
+#define PSU_READ_DELAY_MS   100
+#define PSU_RETRIES         3
 
-static volatile uint32_t *regs = NULL;
-static int fd = -1;
-static uint8_t psu_i2c_reg = PSU_REG_V2;  // Default to V2
-static uint8_t psu_version = 0;
+// Hardware state
+static volatile uint32_t *g_fpga_regs = NULL;
+static int g_fpga_fd = -1;
+static uint8_t g_psu_reg = PSU_REG_V2;
+static uint8_t g_psu_version = 0;
+static volatile sig_atomic_t g_shutdown = 0;
 
-// Signal handling
-static volatile int g_shutdown = 0;
-void signal_handler(int sig) {
-    printf("\nReceived signal %d, shutting down...\n", sig);
+// Signal handler
+static void handle_signal(int sig) {
+    (void)sig;
     g_shutdown = 1;
 }
 
-// GPIO Control via sysfs
-int gpio_export(int gpio) {
-    int fd = open(GPIO_SYSFS_PATH "/export", O_WRONLY);
-    if (fd < 0) {
-        if (errno == EACCES) {
-            // Already exported, not an error
-            return 0;
-        }
-        fprintf(stderr, "Failed to open gpio export: %s\n", strerror(errno));
-        return -1;
-    }
+// Error handling
+#define CHECK(expr, msg, ...) \
+    do { if ((expr) < 0) { fprintf(stderr, "Error: " msg "\n", ##__VA_ARGS__); goto cleanup; } } while(0)
 
-    char buf[16];
-    int len = snprintf(buf, sizeof(buf), "%d", gpio);
-    if (write(fd, buf, len) < 0) {
-        if (errno != EBUSY) {  // EBUSY means already exported
-            fprintf(stderr, "Failed to export gpio %d: %s\n", gpio, strerror(errno));
-            close(fd);
-            return -1;
-        }
-    }
+//==============================================================================
+// GPIO Operations
+//==============================================================================
+
+static int gpio_write_file(const char *path, const char *value) {
+    int fd = open(path, O_WRONLY);
+    if (fd < 0) return -1;
+
+    ssize_t len = strlen(value);
+    ssize_t written = write(fd, value, len);
     close(fd);
-    return 0;
+
+    return (written == len) ? 0 : -1;
 }
 
-int gpio_set_direction(int gpio, const char *direction) {
-    char path[64];
+static int gpio_setup(int gpio, int value) {
+    char path[64], buf[16];
+
+    // Export (ignore if already exported)
+    snprintf(buf, sizeof(buf), "%d", gpio);
+    gpio_write_file(GPIO_SYSFS_PATH "/export", buf);
+
+    // Set direction
     snprintf(path, sizeof(path), GPIO_SYSFS_PATH "/gpio%d/direction", gpio);
-
-    int fd = open(path, O_WRONLY);
-    if (fd < 0) {
-        fprintf(stderr, "Failed to open gpio direction: %s\n", strerror(errno));
+    if (gpio_write_file(path, "out") < 0) {
+        fprintf(stderr, "Failed to set GPIO %d direction\n", gpio);
         return -1;
     }
 
-    if (write(fd, direction, strlen(direction)) < 0) {
-        fprintf(stderr, "Failed to set gpio direction: %s\n", strerror(errno));
-        close(fd);
-        return -1;
-    }
-    close(fd);
-    return 0;
-}
-
-int gpio_set_value(int gpio, int value) {
-    char path[64];
+    // Set value
     snprintf(path, sizeof(path), GPIO_SYSFS_PATH "/gpio%d/value", gpio);
-
-    int fd = open(path, O_WRONLY);
-    if (fd < 0) {
-        fprintf(stderr, "Failed to open gpio value: %s\n", strerror(errno));
+    snprintf(buf, sizeof(buf), "%d", value);
+    if (gpio_write_file(path, buf) < 0) {
+        fprintf(stderr, "Failed to set GPIO %d value\n", gpio);
         return -1;
     }
 
-    char buf[2] = { value ? '1' : '0', 0 };
-    if (write(fd, buf, 1) < 0) {
-        fprintf(stderr, "Failed to write gpio value: %s\n", strerror(errno));
-        close(fd);
-        return -1;
-    }
-    close(fd);
     return 0;
 }
 
-// FPGA I2C Wait for Ready
-int fpga_i2c_wait_ready(void) {
-    int timeout = FPGA_I2C_TIMEOUT_MS / 5;
+//==============================================================================
+// FPGA I2C Operations
+//==============================================================================
 
-    while (timeout-- > 0) {
-        uint32_t val = regs[FPGA_REG_I2C_CTRL];
-        if (val & FPGA_I2C_READY) {
+static inline uint32_t i2c_build_cmd(uint8_t reg, uint8_t data, bool read) {
+    uint32_t cmd = (PSU_I2C_MASTER << 26) |
+                   (PSU_I2C_SLAVE_HIGH << 20) |
+                   ((PSU_I2C_SLAVE_LOW & 0x0E) << 15) |
+                   I2C_REGADDR_VALID | (reg << 8);
+
+    if (read) {
+        cmd |= I2C_READ_OP | I2C_READ_1BYTE;
+    } else {
+        cmd |= data;
+    }
+
+    return cmd;
+}
+
+static int i2c_wait_ready(void) {
+    for (int i = 0; i < I2C_TIMEOUT_MS / 5; i++) {
+        if (g_fpga_regs[REG_I2C_CTRL] & I2C_READY)
             return 0;
-        }
         usleep(5000);
     }
-
-    fprintf(stderr, "FPGA I2C timeout waiting for ready\n");
+    fprintf(stderr, "I2C timeout waiting for ready\n");
     return -1;
 }
 
-// FPGA I2C Wait for Data
-int fpga_i2c_wait_data(uint8_t *data) {
-    int timeout = FPGA_I2C_TIMEOUT_MS / 5;
-
-    while (timeout-- > 0) {
-        uint32_t val = regs[FPGA_REG_I2C_CTRL];
-        if ((val >> 30) == 2) {  // Bits 31-30 = 0b10
+static int i2c_wait_data(uint8_t *data) {
+    for (int i = 0; i < I2C_TIMEOUT_MS / 5; i++) {
+        uint32_t val = g_fpga_regs[REG_I2C_CTRL];
+        if ((val >> 30) == 2) {
             *data = (uint8_t)(val & 0xFF);
             return 0;
         }
         usleep(5000);
     }
-
-    fprintf(stderr, "FPGA I2C timeout waiting for data\n");
+    fprintf(stderr, "I2C timeout waiting for data\n");
     return -1;
 }
 
-// FPGA I2C Write Byte
-int fpga_i2c_write_byte(uint8_t reg_addr, uint8_t data, int reg_addr_valid) {
-    uint32_t cmd;
+static int i2c_write_byte(uint8_t reg, uint8_t data) {
     uint8_t dummy;
 
-    if (fpga_i2c_wait_ready() < 0) {
-        return -1;
-    }
+    if (i2c_wait_ready() < 0) return -1;
 
-    // Build command word - EXACT match to stock firmware FUN_0004a0dc
-    cmd = (PSU_I2C_MASTER << 26) |                    // master << 26
-          (PSU_I2C_SLAVE_HIGH << 20) |                 // (slave >> 4) << 20
-          ((PSU_I2C_SLAVE_LOW & 0x0E) << 15) |        // (slave & 0x0E) << 15  ← CRITICAL FIX!
-          data;                                        // data at bits 0-7
-
-    if (reg_addr_valid) {
-        cmd |= FPGA_I2C_REGADDR_VALID | (reg_addr << 8);  // reg_addr << 8, valid bit 24
-    }
-
-    // Write command
-    regs[FPGA_REG_I2C_CTRL] = cmd;
+    g_fpga_regs[REG_I2C_CTRL] = i2c_build_cmd(reg, data, false);
     __sync_synchronize();
 
-    // Wait for completion
-    if (fpga_i2c_wait_data(&dummy) < 0) {
-        return -1;
-    }
-
-    return 0;
+    return i2c_wait_data(&dummy);
 }
 
-// FPGA I2C Read Byte
-int fpga_i2c_read_byte(uint8_t reg_addr, uint8_t *data, int reg_addr_valid) {
-    uint32_t cmd;
+static int i2c_read_byte(uint8_t reg, uint8_t *data) {
+    if (i2c_wait_ready() < 0) return -1;
 
-    if (fpga_i2c_wait_ready() < 0) {
-        return -1;
-    }
-
-    // Build read command - EXACT match to stock firmware FUN_00049e8c
-    cmd = (PSU_I2C_MASTER << 26) |                    // master << 26
-          FPGA_I2C_READ_OP |                           // bit 25: read operation
-          FPGA_I2C_READ_1BYTE |                        // bit 19: 1-byte read (0x80000)
-          (PSU_I2C_SLAVE_HIGH << 20) |                 // (slave >> 4) << 20
-          ((PSU_I2C_SLAVE_LOW & 0x0E) << 15);         // (slave & 0x0E) << 15  ← CRITICAL FIX!
-
-    if (reg_addr_valid) {
-        cmd |= FPGA_I2C_REGADDR_VALID | (reg_addr << 8);  // reg_addr << 8, valid bit 24
-    }
-
-    // Write command
-    regs[FPGA_REG_I2C_CTRL] = cmd;
+    g_fpga_regs[REG_I2C_CTRL] = i2c_build_cmd(reg, 0, true);
     __sync_synchronize();
 
-    // Wait for data
-    if (fpga_i2c_wait_data(data) < 0) {
-        return -1;
-    }
-
-    return 0;
+    return i2c_wait_data(data);
 }
 
-// Calculate checksum
-uint16_t calc_checksum(uint8_t *data, size_t start, size_t end) {
+//==============================================================================
+// PSU Protocol
+//==============================================================================
+
+static uint16_t calc_checksum(const uint8_t *data, size_t start, size_t end) {
     uint16_t sum = 0;
-    for (size_t i = start; i < end; i++) {
+    for (size_t i = start; i < end; i++)
         sum += data[i];
-    }
     return sum;
 }
 
-// Detect PSU Protocol
-int psu_detect_protocol(void) {
-    uint8_t test_val = PSU_PROTOCOL_DETECT;
-    uint8_t read_val;
+static int psu_transact(const uint8_t *tx, size_t tx_len, uint8_t *rx, size_t rx_len) {
+    for (int retry = 0; retry < PSU_RETRIES; retry++) {
+        // Send command
+        bool tx_ok = true;
+        for (size_t i = 0; i < tx_len && tx_ok; i++)
+            tx_ok = (i2c_write_byte(g_psu_reg, tx[i]) == 0);
+        if (!tx_ok) continue;
+
+        usleep(PSU_SEND_DELAY_MS * 1000);
+
+        // Read response
+        bool rx_ok = true;
+        for (size_t i = 0; i < rx_len && rx_ok; i++)
+            rx_ok = (i2c_read_byte(g_psu_reg, &rx[i]) == 0);
+        if (!rx_ok) continue;
+
+        usleep(PSU_READ_DELAY_MS * 1000);
+
+        // Validate magic bytes
+        if (rx[0] == PSU_MAGIC_1 && rx[1] == PSU_MAGIC_2)
+            return 0;
+    }
+
+    return -1;
+}
+
+static int psu_detect_protocol(void) {
+    uint8_t test_val = PSU_DETECT_MAGIC, read_val;
 
     printf("Detecting PSU protocol...\n");
 
-    // Try V2 protocol first (register 0x11)
-    psu_i2c_reg = PSU_REG_V2;
-    if (fpga_i2c_write_byte(psu_i2c_reg, test_val, 1) == 0) {
+    // Try V2 first
+    g_psu_reg = PSU_REG_V2;
+    if (i2c_write_byte(g_psu_reg, test_val) == 0) {
         usleep(10000);
-        if (fpga_i2c_read_byte(psu_i2c_reg, &read_val, 1) == 0 && read_val == test_val) {
-            printf("  Detected V2 protocol (register 0x11)\n\n");
+        if (i2c_read_byte(g_psu_reg, &read_val) == 0 && read_val == test_val) {
+            printf("  V2 protocol (register 0x11)\n");
             return 0;
         }
     }
 
-    // Fall back to legacy protocol (register 0x00)
-    psu_i2c_reg = PSU_REG_LEGACY;
-    printf("  Using legacy protocol (register 0x00)\n\n");
+    // Fallback to legacy
+    g_psu_reg = PSU_REG_LEGACY;
+    printf("  Legacy protocol (register 0x00)\n");
     return 0;
 }
 
-// Get PSU Version
-int psu_get_version(void) {
-    uint8_t send_packet[16];
-    uint8_t recv_packet[16];
-    uint16_t checksum;
-    int i, retry;
+static int psu_get_version(void) {
+    uint8_t tx[8] = {PSU_MAGIC_1, PSU_MAGIC_2, 4, CMD_GET_TYPE};
+    uint8_t rx[8];
+    uint16_t csum = calc_checksum(tx, 2, 4);
+    tx[4] = csum & 0xFF;
+    tx[5] = (csum >> 8) & 0xFF;
 
-    printf("Reading PSU version...\n");
+    if (psu_transact(tx, 6, rx, 8) < 0)
+        return -1;
 
-    // Build packet
-    send_packet[0] = PSU_MAGIC_1;
-    send_packet[1] = PSU_MAGIC_2;
-    send_packet[2] = 4;  // Length
-    send_packet[3] = CMD_GET_TYPE;
-    checksum = calc_checksum(send_packet, 2, 4);
-    send_packet[4] = checksum & 0xFF;
-    send_packet[5] = (checksum >> 8) & 0xFF;
-
-    for (retry = 0; retry < 3; retry++) {
-        // Send command byte-by-byte
-        for (i = 0; i < 6; i++) {
-            if (fpga_i2c_write_byte(psu_i2c_reg, send_packet[i], 1) < 0) {
-                break;
-            }
-        }
-        if (i < 6) continue;
-
-        usleep(PSU_DELAY_AFTER_SEND_MS * 1000);
-
-        // Read response
-        for (i = 0; i < 8; i++) {
-            if (fpga_i2c_read_byte(psu_i2c_reg, &recv_packet[i], 1) < 0) {
-                break;
-            }
-        }
-        if (i < 8) continue;
-
-        usleep(PSU_DELAY_AFTER_READ_MS * 1000);
-
-        // Validate response
-        if (recv_packet[0] == PSU_MAGIC_1 && recv_packet[1] == PSU_MAGIC_2) {
-            psu_version = recv_packet[4];
-            printf("  PSU Version: 0x%02X, Type: 0x%02X\n\n", psu_version, psu_version);
-            return 0;
-        }
-    }
-
-    fprintf(stderr, "Failed to read PSU version\n");
-    return -1;
+    g_psu_version = rx[4];
+    printf("  PSU version: 0x%02X\n", g_psu_version);
+    return 0;
 }
 
-// Voltage conversion for X19 (version 0x71)
-uint16_t voltage_to_n_v71(uint32_t voltage_mv) {
-    int64_t n = 1190935338LL - ((int64_t)voltage_mv * 78743LL);
-    n = n / 1000000LL;
-
-    if (n < 9) n = 9;       // 15.0V max
-    if (n > 246) n = 246;   // 12.0V min
-
+static uint16_t voltage_to_psu(uint32_t mv) {
+    // Version 0x71 formula
+    int64_t n = (1190935338LL - ((int64_t)mv * 78743LL)) / 1000000LL;
+    if (n < 9) n = 9;
+    if (n > 246) n = 246;
     return (uint16_t)n;
 }
 
-uint32_t n_to_voltage_v71(uint16_t n) {
-    int64_t voltage_mv = 1190935338LL - ((int64_t)n * 1000000LL);
-    voltage_mv = voltage_mv / 78743LL;
-    return (uint32_t)voltage_mv;
-}
-
-// Set PSU Voltage
-int psu_set_voltage(uint32_t voltage_mv) {
-    uint8_t send_packet[16];
-    uint8_t recv_packet[16];
-    uint16_t n_value, checksum;
-    int i, retry;
-
-    printf("Setting voltage to %u mV...\n", voltage_mv);
-
-    if (psu_version == 0x71) {
-        n_value = voltage_to_n_v71(voltage_mv);
-    } else {
-        fprintf(stderr, "Unsupported PSU version 0x%02X\n", psu_version);
+static int psu_set_voltage(uint32_t mv) {
+    if (g_psu_version != 0x71) {
+        fprintf(stderr, "Unsupported PSU version 0x%02X\n", g_psu_version);
         return -1;
     }
 
-    printf("  N value: 0x%04X\n", n_value);
+    uint16_t n = voltage_to_psu(mv);
+    uint8_t tx[8] = {PSU_MAGIC_1, PSU_MAGIC_2, 6, CMD_SET_VOLTAGE,
+                     (uint8_t)(n & 0xFF), (uint8_t)(n >> 8)};
+    uint8_t rx[8];
+    uint16_t csum = calc_checksum(tx, 2, 6);
+    tx[6] = csum & 0xFF;
+    tx[7] = (csum >> 8) & 0xFF;
 
-    // Build packet
-    send_packet[0] = PSU_MAGIC_1;
-    send_packet[1] = PSU_MAGIC_2;
-    send_packet[2] = 6;  // Length (header + 2 data bytes)
-    send_packet[3] = CMD_SET_VOLTAGE;
-    send_packet[4] = n_value & 0xFF;
-    send_packet[5] = (n_value >> 8) & 0xFF;
-    checksum = calc_checksum(send_packet, 2, 6);
-    send_packet[6] = checksum & 0xFF;
-    send_packet[7] = (checksum >> 8) & 0xFF;
+    if (psu_transact(tx, 8, rx, 8) < 0)
+        return -1;
 
-    for (retry = 0; retry < 3; retry++) {
-        // Send command byte-by-byte
-        for (i = 0; i < 8; i++) {
-            if (fpga_i2c_write_byte(psu_i2c_reg, send_packet[i], 1) < 0) {
-                break;
-            }
-        }
-        if (i < 8) continue;
-
-        usleep(PSU_DELAY_AFTER_SEND_MS * 1000);
-
-        // Read response
-        for (i = 0; i < 8; i++) {
-            if (fpga_i2c_read_byte(psu_i2c_reg, &recv_packet[i], 1) < 0) {
-                break;
-            }
-        }
-        if (i < 8) continue;
-
-        usleep(PSU_DELAY_AFTER_READ_MS * 1000);
-
-        // Validate response
-        if (recv_packet[0] == PSU_MAGIC_1 && recv_packet[1] == PSU_MAGIC_2 &&
-            recv_packet[3] == CMD_SET_VOLTAGE) {
-            printf("  Voltage command sent successfully\n\n");
-            return 0;
-        }
-    }
-
-    fprintf(stderr, "Failed to set voltage\n");
-    return -1;
+    return (rx[3] == CMD_SET_VOLTAGE) ? 0 : -1;
 }
 
-// Initialize FPGA
-int fpga_init(void) {
-    printf("Opening %s...\n", AXI_DEVICE);
+//==============================================================================
+// FPGA Operations
+//==============================================================================
 
-    fd = open(AXI_DEVICE, O_RDWR | O_SYNC);
-    if (fd < 0) {
+static int fpga_init(void) {
+    g_fpga_fd = open(AXI_DEVICE, O_RDWR | O_SYNC);
+    if (g_fpga_fd < 0) {
         fprintf(stderr, "Failed to open %s: %s\n", AXI_DEVICE, strerror(errno));
         return -1;
     }
 
-    regs = mmap(NULL, AXI_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (regs == MAP_FAILED) {
-        fprintf(stderr, "Failed to mmap: %s\n", strerror(errno));
-        close(fd);
+    g_fpga_regs = mmap(NULL, AXI_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, g_fpga_fd, 0);
+    if (g_fpga_regs == MAP_FAILED) {
+        fprintf(stderr, "Failed to mmap FPGA: %s\n", strerror(errno));
+        close(g_fpga_fd);
+        g_fpga_fd = -1;
         return -1;
     }
 
-    printf("FPGA registers mapped at %p\n\n", (void*)regs);
     return 0;
 }
 
-void fpga_close(void) {
-    if (regs) {
-        munmap((void*)regs, AXI_SIZE);
-    }
-    if (fd >= 0) {
-        close(fd);
-    }
+static void fpga_cleanup(void) {
+    if (g_fpga_regs != NULL && g_fpga_regs != MAP_FAILED)
+        munmap((void*)g_fpga_regs, AXI_SIZE);
+    if (g_fpga_fd >= 0)
+        close(g_fpga_fd);
 }
 
-// Enable hashboard chain in FPGA (CRITICAL - must be called before PSU communication!)
-// From stock firmware analysis: FUN_00022ba4
-// This function sets a bit in register 0x0D corresponding to the chain number
-int fpga_enable_chain(int chain) {
-    printf("Enabling hashboard chain %d in FPGA register 0x0D...\n", chain);
+//==============================================================================
+// Voltage Ramp Test
+//==============================================================================
 
-    // Read current value
-    uint32_t val = regs[FPGA_REG_CHAIN_ENABLE];
-    printf("  Current value: 0x%08x\n", val);
+static int voltage_ramp(uint32_t start_mv, uint32_t end_mv, int32_t step_mv) {
+    const char *dir = (step_mv > 0) ? "UP" : "DOWN";
 
-    // Set the bit for this chain (bit 0 = chain 0, bit 1 = chain 1, etc)
-    val |= (1U << chain);
-    printf("  New value: 0x%08x (enabled bit %d)\n", val, chain);
+    printf("Ramping %s: %.2fV → %.2fV\n", dir, start_mv/1000.0, end_mv/1000.0);
+    printf("----------------------------------------\n");
 
-    // Write back
-    regs[FPGA_REG_CHAIN_ENABLE] = val;
-    __sync_synchronize();  // Memory barrier
+    for (uint32_t v = start_mv;
+         (step_mv > 0) ? (v <= end_mv) : (v >= end_mv);
+         v += step_mv) {
 
-    // Verify
-    uint32_t verify = regs[FPGA_REG_CHAIN_ENABLE];
-    if (verify != val) {
-        fprintf(stderr, "Error: Chain enable verification failed (wrote 0x%08x, read 0x%08x)\n",
-                val, verify);
-        return -1;
+        if (g_shutdown) return -1;
+
+        printf("  %.2fV... ", v/1000.0);
+        fflush(stdout);
+
+        if (psu_set_voltage(v) < 0) {
+            fprintf(stderr, "FAILED\n");
+            return -1;
+        }
+
+        printf("OK\n");
+        sleep(RAMP_STEP_SECS);
     }
 
-    printf("  Chain %d enabled successfully\n\n", chain);
+    printf("\nReached %.2fV, holding for %ds...\n\n", end_mv/1000.0, VOLTAGE_HOLD_SECS);
+    sleep(VOLTAGE_HOLD_SECS);
+
     return 0;
 }
 
-int main(int argc, char *argv[]) {
-    (void)argc;
-    (void)argv;
+//==============================================================================
+// Main
+//==============================================================================
+
+int main(void) {
+    int ret = 1;
 
     printf("========================================\n");
     printf("X19 APW12 PSU Voltage Ramp Test\n");
     printf("========================================\n\n");
-    printf("Test sequence:\n");
-    printf("  1. Initialize PSU at 15.0V\n");
-    printf("  2. Ramp DOWN: 15.0V → 12.0V (0.25V steps)\n");
-    printf("  3. Ramp UP: 12.0V → 15.0V (0.25V steps)\n");
-    printf("  4. Shutdown PSU\n\n");
+    printf("Sequence: 15V → 12V → 15V (%.2fV steps)\n\n", VOLTAGE_STEP/1000.0);
 
-    // Setup signals
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
+    signal(SIGINT, handle_signal);
+    signal(SIGTERM, handle_signal);
 
-    // Check root
     if (geteuid() != 0) {
         fprintf(stderr, "Error: Must run as root\n");
         return 1;
     }
 
     // Initialize FPGA
-    if (fpga_init() < 0) {
-        return 1;
-    }
+    CHECK(fpga_init(), "FPGA initialization failed");
+    printf("FPGA mapped at %p\n\n", (void*)g_fpga_regs);
 
-    // CRITICAL: Enable hashboard chain 0 in FPGA register 0x0D
-    // This enables the I2C interface to the PSU - without this, PSU won't respond!
-    if (fpga_enable_chain(0) < 0) {
-        fprintf(stderr, "Failed to enable chain in FPGA\n");
-        fpga_close();
-        return 1;
-    }
+    // Power release
+    printf("Power Release\n");
+    printf("----------------------------------------\n");
+    CHECK(gpio_setup(PSU_ENABLE_GPIO, 1), "Failed to setup GPIO %d", PSU_ENABLE_GPIO);
+    printf("PSU disabled (GPIO %d HIGH)\n", PSU_ENABLE_GPIO);
 
-    printf("========================================\n");
-    printf("PSU Power Release & Initialization\n");
-    printf("========================================\n\n");
-
-    // Step 1: GPIO setup and disable PSU (HIGH = disabled, active LOW)
-    printf("Step 1: Disable PSU via GPIO %d (set HIGH)\n", PSU_ENABLE_GPIO);
-    if (gpio_export(PSU_ENABLE_GPIO) < 0) {
-        fprintf(stderr, "Failed to export GPIO\n");
-        fpga_close();
-        return 1;
-    }
-    if (gpio_set_direction(PSU_ENABLE_GPIO, "out") < 0) {  // Set as output
-        fprintf(stderr, "Failed to set GPIO direction\n");
-        fpga_close();
-        return 1;
-    }
-    if (gpio_set_value(PSU_ENABLE_GPIO, 1) < 0) {  // 1 = HIGH = disabled
-        fprintf(stderr, "Failed to disable PSU\n");
-        fpga_close();
-        return 1;
-    }
-    printf("  PSU disabled (GPIO HIGH)\n\n");
-
-    // Step 2: 30-second power release (CRITICAL - matches stock firmware!)
-    printf("Step 2: Waiting 30 seconds for PSU power release...\n");
-    printf("  (This allows internal capacitors to discharge)\n");
-    for (int i = 30; i > 0; i--) {
-        printf("  %d seconds remaining...\r", i);
+    printf("Waiting %ds for capacitor discharge...\n", POWER_RELEASE_SECS);
+    for (int i = POWER_RELEASE_SECS; i > 0 && !g_shutdown; i--) {
+        printf("\r  %ds remaining...", i);
         fflush(stdout);
         sleep(1);
-        if (g_shutdown) {
-            fpga_close();
-            return 1;
-        }
     }
-    printf("  Power release complete!                    \n\n");
+    printf("\rPower release complete!    \n\n");
 
-    if (g_shutdown) {
-        fpga_close();
-        return 1;
-    }
+    if (g_shutdown) goto cleanup;
 
-    printf("========================================\n");
+    // PSU initialization
     printf("PSU Initialization\n");
-    printf("========================================\n\n");
-
-    // Detect protocol
-    if (psu_detect_protocol() < 0) {
-        fpga_close();
-        return 1;
-    }
-
-    // Get version
-    if (psu_get_version() < 0) {
-        fprintf(stderr, "Warning: Could not read version\n\n");
-    }
-
-    // Step 3: Set initial voltage to 15V WHILE PSU IS DISABLED
-    printf("Step 3: Set initial voltage to 15000 mV via I2C (PSU still disabled)\n");
-    if (psu_set_voltage(15000) < 0) {
-        fpga_close();
-        return 1;
-    }
-    printf("  Initial voltage configured successfully\n\n");
-
-    // Step 4: Enable PSU output (LOW = enabled, active LOW)
-    printf("Step 4: Enable PSU DC output (set GPIO LOW)\n");
-    if (gpio_set_value(PSU_ENABLE_GPIO, 0) < 0) {  // 0 = LOW = enabled
-        fprintf(stderr, "Failed to enable PSU\n");
-        fpga_close();
-        return 1;
-    }
-    printf("  PSU enabled (GPIO LOW)\n\n");
-
-    // Step 5: Wait for voltage stabilization
-    printf("Step 5: Waiting for voltage to stabilize...\n");
-    sleep(2);
-    printf("  Voltage stabilized at 15.00V\n\n");
-
-    printf("========================================\n");
-    printf("Starting Voltage Ramp Test\n");
-    printf("========================================\n\n");
-
-    printf("Configuration:\n");
-    printf("  - FPGA chain: 0 (enabled)\n");
-    printf("  - PSU I2C register: 0x%02X\n", psu_i2c_reg);
-    printf("  - PSU version: 0x%02X\n", psu_version);
-    printf("  - GPIO %d: LOW (PSU enabled)\n\n", PSU_ENABLE_GPIO);
-
-    // Ramp DOWN: 15V → 12V in 250mV steps
-    printf("Phase 1: Ramping DOWN from 15.0V to 12.0V\n");
     printf("----------------------------------------\n");
-    for (uint32_t voltage_mv = 15000; voltage_mv >= 12000; voltage_mv -= 250) {
-        if (g_shutdown) break;
+    CHECK(psu_detect_protocol(), "Protocol detection failed");
 
-        printf("  Setting voltage: %u mV (%.2f V)...", voltage_mv, voltage_mv / 1000.0);
-        fflush(stdout);
+    if (psu_get_version() < 0)
+        fprintf(stderr, "Warning: Could not read version\n");
 
-        if (psu_set_voltage(voltage_mv) < 0) {
-            fprintf(stderr, "\nFailed to set voltage\n");
-            break;
-        }
+    CHECK(psu_set_voltage(VOLTAGE_MAX), "Failed to set initial voltage");
+    printf("Initial voltage: %.2fV\n", VOLTAGE_MAX/1000.0);
 
-        printf(" OK\n");
-        sleep(3);  // Wait 3 seconds at each voltage step
-    }
+    CHECK(gpio_setup(PSU_ENABLE_GPIO, 0), "Failed to enable PSU");
+    printf("PSU enabled (GPIO %d LOW)\n", PSU_ENABLE_GPIO);
 
-    if (!g_shutdown) {
-        printf("\n  Reached minimum voltage: 12.0V\n");
-        printf("  Holding for 5 seconds...\n\n");
-        sleep(5);
-    }
+    printf("Settling for %ds...\n\n", VOLTAGE_SETTLE_SECS);
+    sleep(VOLTAGE_SETTLE_SECS);
 
-    // Ramp UP: 12V → 15V in 250mV steps
-    if (!g_shutdown) {
-        printf("Phase 2: Ramping UP from 12.0V to 15.0V\n");
-        printf("----------------------------------------\n");
-        for (uint32_t voltage_mv = 12000; voltage_mv <= 15000; voltage_mv += 250) {
-            if (g_shutdown) break;
-
-            printf("  Setting voltage: %u mV (%.2f V)...", voltage_mv, voltage_mv / 1000.0);
-            fflush(stdout);
-
-            if (psu_set_voltage(voltage_mv) < 0) {
-                fprintf(stderr, "\nFailed to set voltage\n");
-                break;
-            }
-
-            printf(" OK\n");
-            sleep(3);  // Wait 3 seconds at each voltage step
-        }
-
-        printf("\n  Reached maximum voltage: 15.0V\n");
-        printf("  Holding for 5 seconds...\n\n");
-        sleep(5);
-    }
-
-    // Shutdown PSU
-    printf("========================================\n");
-    printf("Shutting Down PSU\n");
+    // Voltage ramp test
+    printf("Voltage Ramp Test\n");
     printf("========================================\n\n");
 
-    printf("Disabling PSU output (GPIO HIGH)...\n");
-    if (gpio_set_value(PSU_ENABLE_GPIO, 1) < 0) {  // 1 = HIGH = disabled
-        fprintf(stderr, "Failed to disable PSU\n");
-    } else {
-        printf("  PSU disabled successfully\n\n");
-    }
+    if (voltage_ramp(VOLTAGE_MAX, VOLTAGE_MIN, -VOLTAGE_STEP) < 0) goto cleanup;
+    if (voltage_ramp(VOLTAGE_MIN, VOLTAGE_MAX, VOLTAGE_STEP) < 0) goto cleanup;
 
+    // Shutdown
+    printf("Shutdown\n");
     printf("========================================\n");
-    printf("Voltage Ramp Test Complete!\n");
-    printf("========================================\n\n");
+    gpio_setup(PSU_ENABLE_GPIO, 1);
+    printf("PSU disabled\n\n");
 
-    printf("Test summary:\n");
-    printf("  - Ramp down: 15.0V → 12.0V (250mV steps)\n");
-    printf("  - Ramp up: 12.0V → 15.0V (250mV steps)\n");
-    printf("  - PSU shutdown: Complete\n\n");
+    printf("Test complete!\n");
+    ret = 0;
 
-    fpga_close();
-    return 0;
+cleanup:
+    fpga_cleanup();
+    return ret;
 }
