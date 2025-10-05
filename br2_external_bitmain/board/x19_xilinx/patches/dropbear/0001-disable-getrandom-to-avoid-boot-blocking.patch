@@ -1,11 +1,11 @@
---- dropbear-2025.88.orig/src/dbrandom.c	2025-10-04 17:05:28.281263662 -0400
-+++ dropbear-2025.88/src/dbrandom.c	2025-10-04 17:05:37.435370762 -0400
+--- a/src/dbrandom.c	2025-05-07 10:30:00.000000000 -0400
++++ b/src/dbrandom.c	2025-10-04 20:50:37.640177049 -0400
 @@ -162,61 +162,6 @@
  #endif
-
-
+ 
+ 
 -#ifdef HAVE_GETRANDOM
--/* Reads entropy seed with getrandom().
+-/* Reads entropy seed with getrandom(). 
 - * May block if the kernel isn't ready.
 - * Return DROPBEAR_SUCCESS or DROPBEAR_FAILURE */
 -static int process_getrandom(hash_state *hs) {
@@ -59,18 +59,18 @@
 -
 -}
 -#endif /* HAVE_GETRANDOM */
-
+ 
  /* Initialise the prng from /dev/urandom or prngd. This function can
   * be called multiple times */
 @@ -240,11 +185,6 @@
  	/* existing state */
  	sha256_process(&hs, (void*)hashpool, sizeof(hashpool));
-
+ 
 -#ifdef HAVE_GETRANDOM
 -	if (process_getrandom(&hs) == DROPBEAR_SUCCESS) {
 -		urandom_seeded = 1;
 -	}
 -#endif
-
+ 
  	if (!urandom_seeded) {
  #if DROPBEAR_USE_PRNGD
