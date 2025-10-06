@@ -1,0 +1,140 @@
+===========================================Miner log===========================================
+1970-01-01 00:00:10 Open miner sn file /config/sn error
+1970-01-01 00:00:10 Miner compile time: Tue Dec  6 16:12:30 CST 2022 type: Antminer S19 Pro sn :
+1970-01-01 00:00:11 This is fix-freq version
+1970-01-01 00:00:11 Miner compile time: Tue Dec  6 16:12:30 CST 2022 type: Antminer S19 Pro
+1970-01-01 00:00:11 commit version: dd076742 2022-10-27 22:42:25, build by: jenkins 2022-12-06 16:28:38
+1970-01-01 00:00:11 opt_multi_version     = 1
+1970-01-01 00:00:11 opt_bitmain_ab        = 1
+1970-01-01 00:00:11 mid_auto_gen          = 0
+1970-01-01 00:00:11 opt_bitmain_work_mode = 0
+1970-01-01 00:00:11 mmap fpga_mem_addr_hal = 0xb5900000
+1970-01-01 00:00:11 HASH_ON_PLUG V9 = 0x7
+1970-01-01 00:00:11 Note: front fan is power on!
+1970-01-01 00:00:11 Note: rear fan is power on!
+1970-01-01 00:00:11 start the http log.
+1970-01-01 00:00:11 httpListenThread start ret=0
+1970-01-01 00:00:11 start listen on 6060 ...
+1970-01-01 00:00:11 load machine NBP1901 conf
+1970-01-01 00:00:11 machine : NBP1901
+1970-01-01 00:00:11 chain_num 4, chain_domain_num 38, chain_asic_num 114, domain_asic_num 3
+2025-10-06 17:40:21 miner ID : 8150f4042b104814
+2025-10-06 17:40:21 FPGA Version = 0xB031
+2025-10-06 17:40:21 HASH_ON_PLUG V9 = 0x7
+2025-10-06 17:40:21 ==========================capability start==========================
+2025-10-06 17:40:21 board num = 3
+2025-10-06 17:40:21 board id = 0, chain num = 1
+2025-10-06 17:40:21 	chain id = 0
+2025-10-06 17:40:21 board id = 1, chain num = 1
+2025-10-06 17:40:21 	chain id = 1
+2025-10-06 17:40:21 board id = 2, chain num = 1
+2025-10-06 17:40:21 	chain id = 2
+2025-10-06 17:40:21 ==========================capability end============================
+2025-10-06 17:40:21 chain num = 3
+2025-10-06 17:40:23 [chain 0]
+2025-10-06 17:40:23 0x0000 11 42 17 35 BF 3C A4 E3   CB 94 AB B3 D4 15 1F E6
+2025-10-06 17:40:23 0x0010 04 69 C2 CC 1B BE EF 50   C2 2C C6 4C EE B6 AE 04
+2025-10-06 17:40:23 0x0020 AE F5 7F EB CD 86 BC 41   9B 0E 90 16 23 38 2C 1C
+2025-10-06 17:40:23 0x0030 2F 2F C2 E2 87 2E 65 BC   2F AC C6 69 68 E5 03 2A
+2025-10-06 17:40:23 0x0040 9B EF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:23 0x0050 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:23 0x0060 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:23 0x0070 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:23 0x0080 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:23 0x0090 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:23 0x00A0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:23 0x00B0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:23 0x00C0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:23 0x00D0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:23 0x00E0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:23 0x00F0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF 5A
+2025-10-06 17:40:23
+2025-10-06 17:40:25 [chain 1]
+2025-10-06 17:40:25 0x0000 11 42 17 35 BF 3C A4 E3   CB 94 AB B3 D4 15 1F E6
+2025-10-06 17:40:25 0x0010 04 69 C2 CC 1B BE EF 50   C2 2C C6 4C EE B6 AE 04
+2025-10-06 17:40:25 0x0020 AE F5 7F EB CD 86 BC 41   9B 0E 90 16 23 38 2C 1C
+2025-10-06 17:40:25 0x0030 2F 2F C2 E2 87 2E 65 BC   2F AC C6 69 68 E5 03 2A
+2025-10-06 17:40:25 0x0040 9B EF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:25 0x0050 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:25 0x0060 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:25 0x0070 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:25 0x0080 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:25 0x0090 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:25 0x00A0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:25 0x00B0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:25 0x00C0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:25 0x00D0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:25 0x00E0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:25 0x00F0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF 5A
+2025-10-06 17:40:25
+2025-10-06 17:40:27 [chain 2]
+2025-10-06 17:40:27 0x0000 11 42 17 35 BF 3C A4 E3   CB 94 AB B3 D4 15 1F E6
+2025-10-06 17:40:27 0x0010 04 69 C2 CC 1B BE EF 50   C2 2C C6 4C EE B6 AE 04
+2025-10-06 17:40:27 0x0020 AE F5 7F EB CD 86 BC 41   9B 0E 90 16 23 38 2C 1C
+2025-10-06 17:40:27 0x0030 2F 2F C2 E2 87 2E 65 BC   2F AC C6 69 68 E5 03 2A
+2025-10-06 17:40:27 0x0040 9B EF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:27 0x0050 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:27 0x0060 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:27 0x0070 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:27 0x0080 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:27 0x0090 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:27 0x00A0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:27 0x00B0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:27 0x00C0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:27 0x00D0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:27 0x00E0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF FF
+2025-10-06 17:40:27 0x00F0 FF FF FF FF FF FF FF FF   FF FF FF FF FF FF FF 5A
+2025-10-06 17:40:27
+2025-10-06 17:40:27 fan_eft : 1  fan_pwm : 100
+2025-10-06 17:40:27 create thread
+2025-10-06 17:40:27 fixed working voltage = 1280
+2025-10-06 17:40:27 Chain [0] PCB Version: 0x0100
+2025-10-06 17:40:27 Chain [0] BOM Version: 0x0100
+2025-10-06 17:40:27 Chain [1] PCB Version: 0x0100
+2025-10-06 17:40:27 Chain [1] BOM Version: 0x0100
+2025-10-06 17:40:27 Chain [2] PCB Version: 0x0100
+2025-10-06 17:40:27 Chain [2] BOM Version: 0x0100
+2025-10-06 17:40:31 Fan check passed.
+2025-10-06 17:40:32 chain[0] PIC jump to app
+2025-10-06 17:40:33 Check chain[0] PIC fw version=0x89
+2025-10-06 17:40:34 chain[1] PIC jump to app
+2025-10-06 17:40:36 Check chain[1] PIC fw version=0x89
+2025-10-06 17:40:37 chain[2] PIC jump to app
+2025-10-06 17:40:39 Check chain[2] PIC fw version=0x89
+2025-10-06 17:40:39 create thread
+2025-10-06 17:40:39 max sensor num = 4
+2025-10-06 17:40:39 temperature_monitor_thread start...
+2025-10-06 17:40:43 power type version: 0x0071
+2025-10-06 17:40:43 Enter sleep to make sure power release finish.
+2025-10-06 17:41:18 Slept 34 seconds, diff = 5.
+2025-10-06 17:41:18 set_voltage_by_steps to 1500.
+2025-10-06 17:41:24 start up min temp by 75a = 26
+2025-10-06 17:41:24 set UART baud to 115200
+2025-10-06 17:41:25 chain avg vol rise to 15.50
+2025-10-06 17:41:31 Chain[0]: find 114 asic, times 0
+2025-10-06 17:41:39 Chain[1]: find 14 asic, times 0
+2025-10-06 17:41:47 Chain[1]: find 14 asic, times 1
+2025-10-06 17:41:55 Chain[1]: find 14 asic, times 2
+2025-10-06 17:41:56 Chain 1 only find 14 asic, will power off hash board 1
+2025-10-06 17:42:04 Chain[2]: find 93 asic, times 0
+2025-10-06 17:42:12 Chain[2]: find 93 asic, times 1
+2025-10-06 17:42:20 Chain[2]: find 93 asic, times 2
+2025-10-06 17:42:20 Chain 2 only find 93 asic, will power off hash board 2
+2025-10-06 17:42:21 pulse_mode = 1, ccdly_sel = 1, pwth_sel = 1
+2025-10-06 17:42:22 min freq in eeprom = 525
+2025-10-06 17:42:22 fixed frequency is 525
+2025-10-06 17:42:22 Bring up temperature is 27
+2025-10-06 17:42:22 set UART baud to 12000000
+2025-10-06 17:42:23 set_voltage_by_steps to 1280.
+2025-10-06 17:42:30 STATUS_INITED: soc init done!
+2025-10-06 17:42:30 create thread
+2025-10-06 17:42:30 create thread
+2025-10-06 17:42:30 fan_etf: Set fixed fan speed=100
+2025-10-06 17:42:32 start to init...
+2025-10-06 17:42:40 Init done!
+2025-10-06 17:42:40 STATUS_OKAY
+2025-10-06 17:42:40 start the cached job
+2025-10-06 17:42:40 Version num 8
+2025-10-06 17:42:40 Mask num 0xe000
+2025-10-06 17:42:40 freq = 525, percent = 90, hcn = 12480, timeout = 449
+2025-10-06 17:42:40 set_start_time_point total_tv_start_sys=156 total_tv_end_sys=157
