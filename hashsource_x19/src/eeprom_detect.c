@@ -4,10 +4,16 @@
  * Reads EEPROM data from hashboard chains via FPGA I2C controller.
  * Matches stock bmminer behavior exactly.
  *
+ * CRITICAL DISCOVERY (via FPGA log analysis + strace):
+ * - ALL chains use the SAME I2C slave address (0xA0)
+ * - Chain selection is done via BYTE ADDRESS OFFSET, not slave address
+ * - Uses 12-bit byte addressing (bits 8-19 of I2C command)
+ * - Chain 0: bytes 0x0000-0x00FF, Chain 1: bytes 0x1200-0x12FF, Chain 2: bytes 0x2500-0x25FF
+ *
  * Based on reverse engineering:
+ * - FPGA log analysis (docs/bmminer_fpga_init_68_7C_2E_2F_A4_D9.log)
+ * - strace of stock bmminer (shows only /dev/axi_fpga_dev usage)
  * - bmminer FUN_00049e8c (EEPROM I2C operations)
- * - single_board_test sub_21B1C (EEPROM open/init)
- * - Slave address formula: (2 * chain_id) | (16 * device_type)
  */
 
 #include <stdio.h>
@@ -27,11 +33,9 @@
 #define FPGA_REG_BASE       0x40000000
 #define FPGA_REG_SIZE       5120
 
-// I2C controller registers - EACH CHAIN HAS ITS OWN REGISTER!
-// Discovered via full FPGA register monitoring during bmminer EEPROM reads
-#define REG_I2C_CHAIN0      (0x030 / 4)   // Chain 0 I2C control register
-#define REG_I2C_CHAIN1      (0x3A8 / 4)   // Chain 1 I2C control register
-#define REG_I2C_CHAIN2      (0x3AC / 4)   // Chain 2 I2C control register
+// I2C controller register - SINGLE REGISTER FOR ALL CHAINS!
+// Chain selection is done via bits 26-27 in the command word
+#define REG_I2C_CTRL        (0x030 / 4)   // I2C control register (shared by all chains)
 #define REG_HASH_ON_PLUG    (0x08 / 4)    // Chain detection register
 
 // I2C command format (from bmminer FUN_00049e8c:40)
@@ -103,62 +107,65 @@ static void fpga_cleanup(void) {
 // FPGA I2C Operations (based on bmminer FUN_00049e8c)
 //==============================================================================
 
-// Per-chain I2C register mapping
-static const int i2c_regs[MAX_CHAINS] = {
-    REG_I2C_CHAIN0,
-    REG_I2C_CHAIN1,
-    REG_I2C_CHAIN2
+// EEPROM byte address offsets per chain (discovered from FPGA log analysis)
+// CRITICAL DISCOVERY: Stock firmware uses the SAME slave address (0xA0) for all chains,
+// but different byte address ranges to access each chain's EEPROM.
+// Analysis of docs/bmminer_fpga_init_68_7C_2E_2F_A4_D9.log shows:
+//   Chain 0: byte addresses 0x0000-0x11DB (EEPROM at 0x0000-0x00FF)
+//   Chain 1: byte addresses 0x11EB-0x244E (EEPROM at 0x1200-0x12FF)
+//   Chain 2: byte addresses 0x246C-0x2FFF (EEPROM at 0x2500-0x25FF)
+static const uint16_t CHAIN_EEPROM_OFFSET[] = {
+    0x0000,  // Chain 0: EEPROM starts at byte 0x0000
+    0x1200,  // Chain 1: EEPROM starts at byte 0x1200
+    0x2500   // Chain 2: EEPROM starts at byte 0x2500
 };
 
-// Calculate I2C slave address for chain (from single_board_test sub_25390)
-// Formula: (2 * chain_id) | (16 * device_type)
-static uint8_t get_slave_address(int chain_id, int device_type) {
-    return (2 * chain_id) | (16 * device_type);
-}
-
 // Read single byte from EEPROM via FPGA I2C
-// Matches bmminer FUN_00049e8c and single_board_test sub_255C0 exactly
+// Uses 12-bit byte addressing (bits 8-19) instead of slave address variation
 static int i2c_read_byte(int chain_id, uint8_t reg_addr, uint8_t *data) {
     uint32_t cmd;
     uint32_t response;
-    int i2c_reg;
 
     if (chain_id < 0 || chain_id >= MAX_CHAINS) {
         fprintf(stderr, "Invalid chain_id: %d\n", chain_id);
         return -1;
     }
 
-    // Get I2C register for this chain
-    i2c_reg = i2c_regs[chain_id];
+    // ALL chains use the same slave address (0xA0)
+    // Chain selection is done via byte address offset, not slave address!
+    const uint8_t slave_addr = 0xA0;  // (16 * DEVICE_TYPE_EEPROM) = 0xA0
 
-    // Calculate per-chain slave address (matching bmminer exactly)
-    // Formula from single_board_test: (2 * chain_id) | (16 * device_type)
-    uint8_t slave_addr = get_slave_address(chain_id, DEVICE_TYPE_EEPROM);
+    // Calculate full 12-bit byte address: base_offset + byte_index
+    uint16_t full_byte_addr = CHAIN_EEPROM_OFFSET[chain_id] + reg_addr;
 
-    // Build I2C command EXACTLY as stock firmware does:
-    // (*v8 << 26) | 0x3000000 | (v8[1] >> 4 << 20) | (v8[1] << 15) & 0x70000 | ((*a2 + v7) << 8)
-    // where v8[1] is the full slave address (0xA0/0xA2/0xA4)
-    cmd = ((uint32_t)chain_id << 26) |                    // Master/chain ID (bits 26-27)
-          I2C_READ_FLAGS |                                // Read operation (0x3 << 24)
-          (((uint32_t)slave_addr >> 4) << 20) |           // High nibble to bits 20-23
-          (((uint32_t)slave_addr << 15) & 0x70000) |      // Slave addr shifted, masked to bits 16-18
-          ((uint32_t)reg_addr << 8);                      // Register/byte address (bits 8-15)
+    // Build I2C command with 12-bit byte addressing (bits 8-19):
+    // - Bits 26-27: always 0 (master ID - stock firmware always uses 0)
+    // - Bits 24-25: 0x3 (read operation)
+    // - Bits 20-23: 0xA (slave address high nibble, always 0xA0)
+    // - Bits 16-19: byte address bits 8-11 (upper nibble of 12-bit address)
+    // - Bits 8-15:  byte address bits 0-7 (lower byte of 12-bit address)
+    // - Bits 0-7:   response data from previous read (ignored for write)
+    cmd = (0 << 26) |                                           // Master ID always 0
+          I2C_READ_FLAGS |                                      // Read operation (0x3 << 24)
+          (((uint32_t)slave_addr >> 4) << 20) |                 // Slave high nibble (0xA)
+          ((((uint32_t)full_byte_addr >> 8) & 0xF) << 16) |     // Byte addr bits 8-11 (bits 16-19, masked to 4 bits)
+          (((uint32_t)full_byte_addr & 0xFF) << 8);             // Byte addr bits 0-7 (bits 8-15)
 
     // Debug: show first command for each chain
     static int debug_shown[MAX_CHAINS] = {0};
     if (!debug_shown[chain_id]) {
-        printf("Chain %d: reg=0x%03X, slave_addr=0x%02X, cmd=0x%08X\n",
-               chain_id, i2c_reg * 4, slave_addr, cmd);
+        printf("Chain %d: slave_addr=0x%02X, byte_offset=0x%04X, first_cmd=0x%08X\n",
+               chain_id, slave_addr, full_byte_addr, cmd);
         debug_shown[chain_id] = 1;
     }
 
-    // Write I2C command to chain-specific register
-    g_fpga_regs[i2c_reg] = cmd;
+    // Write I2C command to FPGA register 0x030 (shared by all chains)
+    g_fpga_regs[REG_I2C_CTRL] = cmd;
 
     // Poll I2C register for response (from bmminer FUN_000498a0)
     // Timeout: 0x259 iterations * 5ms = ~3 seconds
     for (int i = 0; i < I2C_POLL_TIMEOUT; i++) {
-        response = g_fpga_regs[i2c_reg];
+        response = g_fpga_regs[REG_I2C_CTRL];
 
         // Check bit 31 for data ready (from bmminer: if (v4 < 0))
         if (response & 0x80000000) {
