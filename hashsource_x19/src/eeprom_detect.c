@@ -111,13 +111,14 @@ static void fpga_cleanup(void) {
 // CRITICAL DISCOVERY: Stock firmware uses the SAME slave address (0xA0) for all chains,
 // but different byte address ranges to access each chain's EEPROM.
 // Analysis of docs/bmminer_fpga_init_68_7C_2E_2F_A4_D9.log shows:
-//   Chain 0: byte addresses 0x0000-0x11DB (EEPROM at 0x0000-0x00FF)
-//   Chain 1: byte addresses 0x11EB-0x244E (EEPROM at 0x1200-0x12FF)
-//   Chain 2: byte addresses 0x246C-0x2FFF (EEPROM at 0x2500-0x25FF)
+//   Chain 0: byte addresses 0x000-0x0FF (EEPROM at 0x001-0x0FF, data starts at 0x001)
+//   Chain 1: byte addresses 0x100-0x1FF (EEPROM at 0x101-0x1FF, data starts at 0x101)
+//   Chain 2: byte addresses 0x200-0x2FF (EEPROM at 0x201-0x2FF, data starts at 0x201)
+// Note: Only 12 bits of addressing (0x000-0xFFF) are used in the I2C command
 static const uint16_t CHAIN_EEPROM_OFFSET[] = {
-    0x0000,  // Chain 0: EEPROM starts at byte 0x0000
-    0x1200,  // Chain 1: EEPROM starts at byte 0x1200
-    0x2500   // Chain 2: EEPROM starts at byte 0x2500
+    0x0000,  // Chain 0: EEPROM starts at byte 0x000
+    0x0100,  // Chain 1: EEPROM starts at byte 0x100
+    0x0200   // Chain 2: EEPROM starts at byte 0x200
 };
 
 // Read single byte from EEPROM via FPGA I2C
