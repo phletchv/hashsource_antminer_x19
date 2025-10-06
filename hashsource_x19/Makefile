@@ -26,11 +26,10 @@ FAN_TEST = $(BIN_DIR)/fan_test
 FPGA_LOGGER = $(BIN_DIR)/fpga_logger
 PSU_TEST = $(BIN_DIR)/psu_test
 ID2MAC = $(BIN_DIR)/id2mac
+EEPROM_DETECT = $(BIN_DIR)/eeprom_detect
 
 # Source files for main miner
-SRCS = $(SRC_DIR)/main.c \
-       $(SRC_DIR)/utils.c \
-       $(DRV_DIR)/s19_driver.c
+SRCS = $(SRC_DIR)/main.c
 
 # Source files for fan test
 FAN_SRCS = $(SRC_DIR)/fan_test.c
@@ -44,12 +43,16 @@ PSU_SRCS = $(SRC_DIR)/psu_test.c
 # Source files for id2mac
 ID2MAC_SRCS = $(SRC_DIR)/id2mac.c
 
+# Source files for eeprom_detect
+EEPROM_DETECT_SRCS = $(SRC_DIR)/eeprom_detect.c
+
 # Object files
 OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(SRCS)))
 FAN_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(FAN_SRCS)))
 LOGGER_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(LOGGER_SRCS)))
 PSU_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(PSU_SRCS)))
 ID2MAC_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(ID2MAC_SRCS)))
+EEPROM_DETECT_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(EEPROM_DETECT_SRCS)))
 
 # Compiler flags
 CFLAGS = -Wall -Wextra -O2 -g
@@ -61,7 +64,7 @@ CFLAGS += -D_GNU_SOURCE
 LDFLAGS = -pthread -lm -lrt
 
 # Default target
-all: dirs $(TARGET) $(FAN_TEST) $(FPGA_LOGGER) $(PSU_TEST) $(ID2MAC)
+all: dirs $(TARGET) $(FAN_TEST) $(FPGA_LOGGER) $(PSU_TEST) $(ID2MAC) $(EEPROM_DETECT)
 
 # Create directories
 dirs:
@@ -103,6 +106,14 @@ $(PSU_TEST): $(PSU_OBJS)
 $(ID2MAC): $(ID2MAC_OBJS)
 	@echo "Linking $@"
 	$(CC) $(ID2MAC_OBJS) -o $@
+	@echo "Stripping $@"
+	$(STRIP) $@
+	@echo "Build complete: $@"
+
+# Build eeprom_detect
+$(EEPROM_DETECT): $(EEPROM_DETECT_OBJS)
+	@echo "Linking $@"
+	$(CC) $(EEPROM_DETECT_OBJS) -o $@ $(LDFLAGS)
 	@echo "Stripping $@"
 	$(STRIP) $@
 	@echo "Build complete: $@"

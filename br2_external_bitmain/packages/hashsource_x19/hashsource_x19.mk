@@ -22,6 +22,8 @@ define HASHSOURCE_X19_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/usr/bin/psu_test
 	$(INSTALL) -D -m 0755 $(@D)/bin/fpga_logger \
 		$(TARGET_DIR)/usr/bin/fpga_logger
+	$(INSTALL) -D -m 0755 $(@D)/bin/eeprom_detect \
+		$(TARGET_DIR)/usr/bin/eeprom_detect
 	$(INSTALL) -D -m 0755 $(@D)/bin/hashsource_miner \
 		$(TARGET_DIR)/usr/bin/hashsource_miner
 	$(INSTALL) -D -m 0755 $(@D)/bin/id2mac \
