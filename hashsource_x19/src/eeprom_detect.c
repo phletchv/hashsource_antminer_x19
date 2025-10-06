@@ -27,11 +27,11 @@
 #define FPGA_REG_BASE       0x40000000
 #define FPGA_REG_SIZE       5120
 
-// I2C controller register - varies by hardware variant (from bmminer lookup tables)
-// Variant 1: 0x30 (index 0xc in DAT_0007f130)
-// Variant 2: 0x34 (index 0xc in DAT_0007ee48)
-#define REG_I2C_CTRL_V1     (0x30 / 4)    // I2C control register variant 1
-#define REG_I2C_CTRL_V2     (0x34 / 4)    // I2C control register variant 2
+// I2C controller registers - EACH CHAIN HAS ITS OWN REGISTER!
+// Discovered via full FPGA register monitoring during bmminer EEPROM reads
+#define REG_I2C_CHAIN0      (0x030 / 4)   // Chain 0 I2C control register
+#define REG_I2C_CHAIN1      (0x3A8 / 4)   // Chain 1 I2C control register
+#define REG_I2C_CHAIN2      (0x3AC / 4)   // Chain 2 I2C control register
 #define REG_HASH_ON_PLUG    (0x08 / 4)    // Chain detection register
 
 // I2C command format (from bmminer FUN_00049e8c:40)
@@ -103,8 +103,12 @@ static void fpga_cleanup(void) {
 // FPGA I2C Operations (based on bmminer FUN_00049e8c)
 //==============================================================================
 
-// Global I2C register variant (auto-detected)
-static int g_i2c_reg = -1;
+// Per-chain I2C register mapping
+static const int i2c_regs[MAX_CHAINS] = {
+    REG_I2C_CHAIN0,
+    REG_I2C_CHAIN1,
+    REG_I2C_CHAIN2
+};
 
 // Calculate I2C slave address for chain (from single_board_test sub_25390)
 // Formula: (2 * chain_id) | (16 * device_type)
@@ -117,61 +121,44 @@ static uint8_t get_slave_address(int chain_id, int device_type) {
 static int i2c_read_byte(int chain_id, uint8_t reg_addr, uint8_t *data) {
     uint32_t cmd;
     uint32_t response;
+    int i2c_reg;
 
-    // Calculate per-chain slave address (stock firmware method)
-    // EEPROM addresses: Chain 0=0xA0, Chain 1=0xA2, Chain 2=0xA4
-    uint8_t slave_addr = get_slave_address(chain_id, DEVICE_TYPE_EEPROM);
-    uint8_t slave_high = (slave_addr >> 4) & 0xF;   // High nibble (0xA for EEPROM)
-    uint8_t slave_low = (slave_addr >> 1) & 0x7;    // Low 3 bits (varies by chain)
-
-    // Build I2C command (from bmminer FUN_00049e8c and single_board_test)
-    // (*v8 << 26) | 0x3000000 | (v8[1] >> 4 << 20) | (v8[1] << 15) & 0x70000 | ((*a2 + v7) << 8)
-    cmd = ((uint32_t)chain_id << 26) |      // Master/chain ID (bits 26-27)
-          I2C_READ_FLAGS |                   // Read operation (0x3 << 24)
-          ((uint32_t)slave_high << 20) |     // Slave address high nibble (bits 20-23)
-          ((uint32_t)slave_low << 15) |      // Slave address low bits (bits 15-17)
-          ((uint32_t)reg_addr << 8);         // Register/byte address (bits 8-15)
-
-    // Auto-detect I2C register variant on first call
-    if (g_i2c_reg == -1) {
-        printf("Auto-detecting I2C controller register variant...\n");
-
-        // Try variant 1 (0x30)
-        printf("  Trying variant 1 (reg 0x%02X)...\n", REG_I2C_CTRL_V1 * 4);
-        g_fpga_regs[REG_I2C_CTRL_V1] = cmd;
-        usleep(10000);
-        response = g_fpga_regs[REG_I2C_CTRL_V1];
-        if (response & 0x80000000) {
-            printf("  Variant 1 detected! Using reg 0x%02X\n", REG_I2C_CTRL_V1 * 4);
-            g_i2c_reg = REG_I2C_CTRL_V1;
-            *data = (uint8_t)(response & 0xFF);
-            return 0;
-        }
-
-        // Try variant 2 (0x34)
-        printf("  Trying variant 2 (reg 0x%02X)...\n", REG_I2C_CTRL_V2 * 4);
-        g_fpga_regs[REG_I2C_CTRL_V2] = cmd;
-        usleep(10000);
-        response = g_fpga_regs[REG_I2C_CTRL_V2];
-        if (response & 0x80000000) {
-            printf("  Variant 2 detected! Using reg 0x%02X\n", REG_I2C_CTRL_V2 * 4);
-            g_i2c_reg = REG_I2C_CTRL_V2;
-            *data = (uint8_t)(response & 0xFF);
-            return 0;
-        }
-
-        fprintf(stderr, "  Failed to detect I2C variant (V1: 0x%08X, V2: 0x%08X)\n",
-                g_fpga_regs[REG_I2C_CTRL_V1], g_fpga_regs[REG_I2C_CTRL_V2]);
+    if (chain_id < 0 || chain_id >= MAX_CHAINS) {
+        fprintf(stderr, "Invalid chain_id: %d\n", chain_id);
         return -1;
     }
 
-    // Write I2C command to detected register
-    g_fpga_regs[g_i2c_reg] = cmd;
+    // Get I2C register for this chain
+    i2c_reg = i2c_regs[chain_id];
+
+    // Calculate per-chain slave address (matching bmminer exactly)
+    // Formula from single_board_test: (2 * chain_id) | (16 * device_type)
+    uint8_t slave_addr = get_slave_address(chain_id, DEVICE_TYPE_EEPROM);
+
+    // Build I2C command EXACTLY as stock firmware does:
+    // (*v8 << 26) | 0x3000000 | (v8[1] >> 4 << 20) | (v8[1] << 15) & 0x70000 | ((*a2 + v7) << 8)
+    // where v8[1] is the full slave address (0xA0/0xA2/0xA4)
+    cmd = ((uint32_t)chain_id << 26) |                    // Master/chain ID (bits 26-27)
+          I2C_READ_FLAGS |                                // Read operation (0x3 << 24)
+          (((uint32_t)slave_addr >> 4) << 20) |           // High nibble to bits 20-23
+          (((uint32_t)slave_addr << 15) & 0x70000) |      // Slave addr shifted, masked to bits 16-18
+          ((uint32_t)reg_addr << 8);                      // Register/byte address (bits 8-15)
+
+    // Debug: show first command for each chain
+    static int debug_shown[MAX_CHAINS] = {0};
+    if (!debug_shown[chain_id]) {
+        printf("Chain %d: reg=0x%03X, slave_addr=0x%02X, cmd=0x%08X\n",
+               chain_id, i2c_reg * 4, slave_addr, cmd);
+        debug_shown[chain_id] = 1;
+    }
+
+    // Write I2C command to chain-specific register
+    g_fpga_regs[i2c_reg] = cmd;
 
     // Poll I2C register for response (from bmminer FUN_000498a0)
     // Timeout: 0x259 iterations * 5ms = ~3 seconds
     for (int i = 0; i < I2C_POLL_TIMEOUT; i++) {
-        response = g_fpga_regs[g_i2c_reg];
+        response = g_fpga_regs[i2c_reg];
 
         // Check bit 31 for data ready (from bmminer: if (v4 < 0))
         if (response & 0x80000000) {
@@ -251,6 +238,13 @@ int main(void) {
 
     // Check which chains are detected
     hash_on_plug = g_fpga_regs[REG_HASH_ON_PLUG];
+    printf("HASH_ON_PLUG = 0x%08X\n", hash_on_plug);
+    for (int i = 0; i < MAX_CHAINS; i++) {
+        if (hash_on_plug & (1 << i)) {
+            printf("  Chain %d: detected\n", i);
+        }
+    }
+    printf("\n");
 
     // Read EEPROM from each detected chain (matching bmminer behavior)
     for (int chain = 0; chain < MAX_CHAINS; chain++) {
@@ -259,6 +253,11 @@ int main(void) {
         }
 
         memset(eeprom_data, 0xFF, sizeof(eeprom_data));
+
+        // Add small delay between chains (bmminer has ~2 second gap)
+        if (chain > 0) {
+            usleep(2000000);  // 2 second delay between chains
+        }
 
         if (eeprom_read(chain, eeprom_data, EEPROM_SIZE) == 0) {
             display_eeprom(chain, eeprom_data);
