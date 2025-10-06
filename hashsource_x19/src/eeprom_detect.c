@@ -1,8 +1,8 @@
 /*
- * X19 EEPROM Detection and Information Display
+ * X19 EEPROM Detection and Information Display (MAXIMUM SPEED)
  *
  * Reads EEPROM data from hashboard chains via FPGA I2C controller.
- * Matches stock bmminer behavior exactly.
+ * ZERO DELAYS - Pure busy-wait polling for maximum throughput.
  *
  * CRITICAL DISCOVERY (via FPGA log analysis + strace):
  * - ALL chains use the SAME I2C slave address (0xA0)
@@ -14,6 +14,12 @@
  * - FPGA log analysis (docs/bmminer_fpga_init_68_7C_2E_2F_A4_D9.log)
  * - strace of stock bmminer (shows only /dev/axi_fpga_dev usage)
  * - bmminer FUN_00049e8c (EEPROM I2C operations)
+ *
+ * Performance optimizations:
+ * - ZERO delays in I2C polling (busy-wait on FPGA register)
+ * - ZERO delays between byte reads
+ * - ZERO delays between chains
+ * - Pure FPGA hardware-limited throughput
  */
 
 #include <stdio.h>
@@ -57,9 +63,8 @@
 // Max chains
 #define MAX_CHAINS          3
 
-// Timing (from bmminer FUN_000498a0)
-#define I2C_POLL_TIMEOUT    0x259         // 601 iterations
-#define I2C_POLL_DELAY_US   5000          // 5ms delay between polls
+// Timing (maximum speed - no delays)
+#define I2C_POLL_TIMEOUT    1000000       // High iteration count for busy-wait polling
 
 //==============================================================================
 // Global FPGA register mapping
@@ -163,8 +168,7 @@ static int i2c_read_byte(int chain_id, uint8_t reg_addr, uint8_t *data) {
     // Write I2C command to FPGA register 0x030 (shared by all chains)
     g_fpga_regs[REG_I2C_CTRL] = cmd;
 
-    // Poll I2C register for response (from bmminer FUN_000498a0)
-    // Timeout: 0x259 iterations * 5ms = ~3 seconds
+    // Poll I2C register for response (busy-wait, no delays)
     for (int i = 0; i < I2C_POLL_TIMEOUT; i++) {
         response = g_fpga_regs[REG_I2C_CTRL];
 
@@ -174,8 +178,6 @@ static int i2c_read_byte(int chain_id, uint8_t reg_addr, uint8_t *data) {
             *data = (uint8_t)(response & 0xFF);
             return 0;
         }
-
-        usleep(I2C_POLL_DELAY_US);
     }
 
     // Timeout
@@ -192,10 +194,7 @@ static int eeprom_read(int chain_id, uint8_t *buffer, size_t size) {
             return -1;
         }
 
-        // Small delay between reads (matching stock firmware timing)
-        if ((i % 16) == 15) {
-            usleep(500000);  // 500ms every 16 bytes (from stock firmware)
-        }
+        // No delay needed - FPGA I2C controller handles timing internally
     }
 
     return 0;
@@ -254,18 +253,13 @@ int main(void) {
     }
     printf("\n");
 
-    // Read EEPROM from each detected chain (matching bmminer behavior)
+    // Read EEPROM from each detected chain (maximum speed - no delays)
     for (int chain = 0; chain < MAX_CHAINS; chain++) {
         if (!(hash_on_plug & (1 << chain))) {
             continue;  // Skip undetected chains
         }
 
         memset(eeprom_data, 0xFF, sizeof(eeprom_data));
-
-        // Add small delay between chains (bmminer has ~2 second gap)
-        if (chain > 0) {
-            usleep(2000000);  // 2 second delay between chains
-        }
 
         if (eeprom_read(chain, eeprom_data, EEPROM_SIZE) == 0) {
             display_eeprom(chain, eeprom_data);
