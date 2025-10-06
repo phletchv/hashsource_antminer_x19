@@ -86,10 +86,10 @@ $(FAN_TEST): $(FAN_OBJS)
 	$(STRIP) $@
 	@echo "Build complete: $@"
 
-# Build FPGA logger
+# Build FPGA logger (static for portability)
 $(FPGA_LOGGER): $(LOGGER_OBJS)
-	@echo "Linking $@"
-	$(CC) $(LOGGER_OBJS) -o $@ $(LDFLAGS)
+	@echo "Linking $@ (static)"
+	$(CC) $(LOGGER_OBJS) -o $@ $(LDFLAGS) -static
 	@echo "Stripping $@"
 	$(STRIP) $@
 	@echo "Build complete: $@"

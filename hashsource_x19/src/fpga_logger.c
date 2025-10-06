@@ -1,7 +1,7 @@
 /*
- * FPGA Register Logger
- * Continuously monitors and logs changes to FPGA registers
- * Run this BEFORE starting bmminer to capture initialization sequence
+ * FPGA Register Logger with Auto-Restart
+ * Automatically restarts cgminer/bmminer and logs FPGA register changes
+ * during initialization sequence
  */
 
 #include <stdio.h>
@@ -14,11 +14,12 @@
 #include <time.h>
 #include <signal.h>
 #include <errno.h>
+#include <sys/wait.h>
 
 #define FPGA_DEVICE "/dev/axi_fpga_dev"
 #define FPGA_SIZE 0x1200
 #define NUM_REGS (FPGA_SIZE / 4)
-#define POLL_INTERVAL_US 10000  // 10ms
+#define POLL_INTERVAL_US  1000  // 1ms for faster capture
 
 static volatile int g_running = 1;
 static FILE *g_logfile = NULL;
@@ -34,20 +35,57 @@ void log_timestamp(FILE *f) {
     fprintf(f, "[%ld.%06ld] ", ts.tv_sec, ts.tv_nsec / 1000);
 }
 
-int main(int argc, char *argv[]) {
-    const char *logfile = "/tmp/fpga_changes.log";
+int restart_cgminer(void) {
+    printf("\n====================================\n");
+    printf("Restarting cgminer/bmminer...\n");
+    printf("====================================\n\n");
 
-    if (argc > 1) {
-        logfile = argv[1];
+    // Kill existing processes
+    system("killall -9 bmminer cgminer 2>/dev/null");
+    sleep(2);
+
+    // Restart via init script
+    int ret = system("sudo /etc/init.d/S70cgminer restart");
+
+    if (ret == 0) {
+        printf("cgminer/bmminer restarted successfully\n");
+        printf("Waiting 5 seconds before starting logger...\n\n");
+        sleep(5);
+        return 0;
+    } else {
+        fprintf(stderr, "Warning: Failed to restart cgminer (exit code %d)\n", ret);
+        fprintf(stderr, "Continuing with logging anyway...\n\n");
+        return -1;
+    }
+}
+
+int main(int argc, char *argv[]) {
+    const char *logfile = "/tmp/fpga_init.log";
+    int auto_restart = 1;
+
+    // Parse arguments
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--no-restart") == 0) {
+            auto_restart = 0;
+        } else {
+            logfile = argv[i];
+        }
     }
 
-    printf("FPGA Register Change Logger\n");
-    printf("===========================\n");
+    printf("FPGA Register Change Logger with Auto-Restart\n");
+    printf("==============================================\n");
     printf("Device: %s\n", FPGA_DEVICE);
     printf("Log file: %s\n", logfile);
     printf("Monitoring %d registers (0x000-0x%03X)\n", NUM_REGS, FPGA_SIZE - 4);
     printf("Poll interval: %d microseconds\n", POLL_INTERVAL_US);
-    printf("\nPress Ctrl+C to stop\n\n");
+    printf("Auto-restart: %s\n\n", auto_restart ? "yes" : "no");
+
+    // Restart cgminer if requested
+    if (auto_restart) {
+        restart_cgminer();
+    }
+
+    printf("Press Ctrl+C to stop\n\n");
 
     // Setup signal handler
     signal(SIGINT, signal_handler);
