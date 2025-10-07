@@ -201,6 +201,92 @@ static int eeprom_read(int chain_id, uint8_t *buffer, size_t size) {
 }
 
 //==============================================================================
+// XXTEA Decryption (from bmminer FUN_00018d98)
+//==============================================================================
+
+// XOR decryption keys (extracted from stock and HulkOS firmware)
+// Key set 1: "uohzoahzuhidkgna" (Bitmain stock)
+static const uint32_t XOR_KEY1[4] = {
+    0x7A686F75, 0x7A68616F, 0x64696875, 0x616E676B
+};
+
+// Key set 2: "iewgoahznehzwstg" (HulkOS firmware)
+static const uint32_t XOR_KEY2[4] = {
+    0x67776569, 0x7A68616F, 0x7A68656E, 0x67747377
+};
+
+// XOR-based decryption (simpler than XXTEA, mode 3 in bmminer)
+static void xor_decrypt(uint32_t *data, uint32_t len) {
+    uint32_t n = len >> 2;  // Number of 32-bit words
+
+    for (uint32_t i = 0; i < n; i++) {
+        data[i] ^= XOR_KEY2[i % 4];  // Try HulkOS key
+    }
+}
+
+// XXTEA decryption keys (extracted from S19 Pro bmminer at address 0x7E2AC)
+// CRITICAL: Key index 1 is used for S19 Pro EEPROM decryption (not key 0!)
+// Discovered via S19 XP single_board_test binary analysis
+// Key 1: "uileynimggnagnau" (0x75 0x69 0x6c 0x65 0x79 0x6e 0x69 0x6d 0x67 0x67 0x6e 0x61 0x67 0x6e 0x61 0x75)
+static const uint32_t XXTEA_KEY_S19PRO[4] = {
+    0x656C6975,  // "uile" (little-endian)
+    0x6D696E79,  // "ynim" (little-endian)
+    0x616E6767,  // "ggna" (little-endian)
+    0x75616E67   // "gnau" (little-endian)
+};
+
+#define XXTEA_DELTA 0x9E3779B9
+
+// XXTEA decrypt - exact implementation from S19 XP single_board_test (xxtea_decode-000879b4)
+static void xxtea_decrypt(uint32_t *data, uint32_t len) {
+    uint32_t n = len >> 2;  // Number of 32-bit words
+
+    if (n < 2) {
+        return;  // Need at least 2 words for XXTEA
+    }
+
+    uint32_t rounds = 6 + 52 / n;
+    uint32_t sum = rounds * XXTEA_DELTA;
+    uint32_t y = data[0];
+    uint32_t z, mx;
+
+    for (uint32_t r = 0; r < rounds; r++) {
+        uint32_t e = (sum >> 2) & 3;
+
+        // Decrypt from end to start
+        for (uint32_t p = n - 1; p > 0; p--) {
+            z = data[p - 1];
+            mx = ((z ^ XXTEA_KEY_S19PRO[e ^ (p & 3)]) + (sum ^ y)) ^
+                 ((z >> 5 ^ y << 2) + (z << 4 ^ y >> 3));
+            data[p] -= mx;
+            y = data[p];
+        }
+
+        // Decrypt first element
+        z = data[n - 1];
+        mx = ((z ^ XXTEA_KEY_S19PRO[e]) + (sum ^ y)) ^
+             ((z >> 5 ^ y << 2) + (z << 4 ^ y >> 3));
+        data[0] -= mx;
+        y = data[0];
+
+        sum += 0x61c88647;  // Add DELTA inverse (-DELTA in unsigned)
+    }
+}
+
+//==============================================================================
+// EEPROM Data Structures
+//==============================================================================
+
+typedef struct {
+    uint16_t pcb_version;
+    uint16_t bom_version;
+    uint16_t freq_level0;  // Minimum frequency
+    uint16_t freq_level1;  // Maximum frequency
+    uint8_t format;        // EEPROM format version (1-4)
+    uint8_t valid;         // Parsing success flag
+} eeprom_info_t;
+
+//==============================================================================
 // EEPROM Data Display (matches bmminer log format exactly)
 //==============================================================================
 
@@ -227,6 +313,92 @@ static void display_eeprom(int chain_id, const uint8_t *data) {
     }
 
     printf("\n");
+}
+
+//==============================================================================
+// EEPROM Parsing (based on bmminer FUN_0001740c)
+//==============================================================================
+
+static int parse_eeprom(const uint8_t *raw_data, eeprom_info_t *info) {
+    uint8_t decrypted[256];
+    uint32_t temp_buf[64];  // Temp buffer for decryption
+    uint32_t *data_words;
+
+    memset(info, 0, sizeof(eeprom_info_t));
+    memcpy(decrypted, raw_data, 256);
+
+    // Check header byte (must be 0x11)
+    if ((decrypted[0] & 0xF0) != 0x10 || (decrypted[0] & 0x0F) != 0x01) {
+        fprintf(stderr, "Invalid EEPROM header: 0x%02X (expected 0x11)\n", decrypted[0]);
+        return -1;
+    }
+
+    // Get data length
+    uint8_t data_len = decrypted[1];
+    if (data_len < 2 || data_len > 250) {
+        fprintf(stderr, "Invalid EEPROM data length: %d\n", data_len);
+        return -1;
+    }
+
+    // Calculate encryption length (must be 8-byte aligned, add 5 for alignment)
+    uint32_t enc_len = (data_len + 5) & ~7;
+
+    // Copy encrypted data to temp buffer for decryption
+    memcpy(temp_buf, &decrypted[2], enc_len);
+
+    // Use XXTEA decryption (verified working with Key 1 from S19 XP analysis)
+    xxtea_decrypt(temp_buf, enc_len);
+
+    // Copy decrypted data back (only data_len - 2 bytes, excluding header bytes already copied)
+    memcpy(&decrypted[2], temp_buf, data_len - 2);
+
+    // Debug output
+    printf("Data length: %d, Enc length: %d\n", data_len, enc_len);
+    printf("First 32 decrypted bytes (XXTEA): ");
+    for (int i = 0; i < 32 && i < data_len; i++) {
+        printf("%02X ", decrypted[2 + i]);
+    }
+    printf("\n");
+
+    // Get format type from first decrypted byte (byte 2 after header, offset 0 in decrypted payload)
+    info->format = decrypted[2];
+    printf("Format byte: 0x%02X (%d)\n", info->format, info->format);
+
+    // Parse based on format
+    // Format 3: S19 Pro standard format (discovered via successful decryption)
+    // Decrypted structure (offset relative to decrypted[2], i.e., after 0x11 0x4A header):
+    //   Offset 0x00: Format (0x03)
+    //   Offset 0x01-0x1E: Serial number (30 bytes ASCII)
+    //   Offset 0x22: Additional data
+    //   Offset 0x33-0x34: PCB version (little-endian uint16)
+    //   Offset 0x35-0x36: BOM version (little-endian uint16)
+    if (info->format == 3) {
+        // Format 3 offsets (verified with real EEPROM data)
+        // PCB at decrypted[2 + 0x33] = raw[0x35-0x36] (after adding 2-byte header)
+        info->pcb_version = decrypted[2 + 0x33] | (decrypted[2 + 0x34] << 8);  // Little-endian
+        info->bom_version = decrypted[2 + 0x35] | (decrypted[2 + 0x36] << 8);  // Little-endian
+        // TODO: Find frequency offset in format 3 (not yet discovered)
+        info->freq_level0 = 525;  // Default S19 Pro frequency
+        info->freq_level1 = 525;
+    } else if (info->format >= 1 && info->format <= 2) {
+        // Format 1-2 offsets (from bmminer decompilation, not yet tested)
+        info->pcb_version = (decrypted[0x2F] << 8) | decrypted[0x30];
+        info->bom_version = (decrypted[0x31] << 8) | decrypted[0x32];
+        info->freq_level0 = (decrypted[0x35] << 8) | decrypted[0x36];
+        info->freq_level1 = (decrypted[0x37] << 8) | decrypted[0x38];
+    } else if (info->format == 4) {
+        // Format 4 (not yet tested)
+        info->pcb_version = (decrypted[0x33] << 8) | decrypted[0x35];
+        info->bom_version = (decrypted[0x36] << 8) | decrypted[0x37];
+        info->freq_level0 = (decrypted[0x3A] << 8) | decrypted[0x3B];
+        info->freq_level1 = (decrypted[0x3C] << 8) | decrypted[0x3D];
+    } else {
+        fprintf(stderr, "Unsupported EEPROM format: %d (0x%02X)\n", info->format, info->format);
+        return -1;
+    }
+
+    info->valid = 1;
+    return 0;
 }
 
 //==============================================================================
@@ -262,7 +434,22 @@ int main(void) {
         memset(eeprom_data, 0xFF, sizeof(eeprom_data));
 
         if (eeprom_read(chain, eeprom_data, EEPROM_SIZE) == 0) {
+            eeprom_info_t info;
+
+            // Display raw hex dump
             display_eeprom(chain, eeprom_data);
+
+            // Parse and display decoded information
+            if (parse_eeprom(eeprom_data, &info) == 0) {
+                printf("Chain [%d] PCB Version: 0x%04x\n", chain, info.pcb_version);
+                printf("Chain [%d] BOM Version: 0x%04x\n", chain, info.bom_version);
+                printf("Chain [%d] Format: %d\n", chain, info.format);
+                printf("Chain [%d] Min Frequency: %d MHz\n", chain, info.freq_level0);
+                printf("Chain [%d] Max Frequency: %d MHz\n", chain, info.freq_level1);
+                printf("\n");
+            } else {
+                fprintf(stderr, "Failed to parse EEPROM data from chain %d\n", chain);
+            }
         } else {
             fprintf(stderr, "Failed to read EEPROM from chain %d\n", chain);
         }
