@@ -2,7 +2,7 @@
  * BM1398 ASIC Driver Implementation
  *
  * Protocol reverse-engineered from:
- * - LiLei_WeChat S19_Pro single_board_test.c
+ * - Bitmain_Test_Fixtures S19_Pro single_board_test.c
  * - bitmaintech bmminer-mix driver-btm-c5.c
  * - Bitmain_Peek S19_Pro firmware analysis
  */
@@ -36,7 +36,7 @@
  * Polynomial: Custom 5-bit CRC
  * Initial value: 0x1F
  *
- * Source: LiLei single_board_test.c line 28769
+ * Source: Bitmain single_board_test.c line 28769
  */
 uint8_t bm1398_crc5(const uint8_t *data, unsigned int bits) {
     uint8_t crc = 0x1F;  // Initial value
@@ -397,7 +397,7 @@ int bm1398_read_modify_write_register(bm1398_context_t *ctx, int chain,
 /**
  * Stage 1: Hardware Reset Sequence
  *
- * Source: LiLei single_board_test.c lines 13617-13633
+ * Source: Bitmain single_board_test.c lines 13617-13633
  */
 int bm1398_reset_chain_stage1(bm1398_context_t *ctx, int chain) {
     printf("Stage 1: Hardware reset chain %d...\n", chain);
@@ -426,7 +426,7 @@ int bm1398_reset_chain_stage1(bm1398_context_t *ctx, int chain) {
 /**
  * Stage 2: Configuration Sequence
  *
- * Source: LiLei single_board_test.c lines 13640-13694
+ * Source: Bitmain single_board_test.c lines 13640-13694
  */
 int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
                                   uint8_t diode_vdd_mux_sel) {
@@ -523,64 +523,75 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     usleep(50000);
 
     // 7a. Core reset sequence (critical for nonce reception)
-    // This follows factory test do_core_reset() sequence
-    printf("  Performing core reset sequence...\n");
-    for (int chip = 0; chip < num_chips; chip++) {
-        uint8_t chip_addr = chip * CHIP_ADDRESS_INTERVAL;
+    // Use broadcast writes to avoid system hang with 114 chips
+    printf("  Performing core reset sequence (broadcast)...\n");
 
-        // Step 1a: Soft reset control (register 0xA8)
-        // Write soft reset bits (factory test ORs with 0x1F0)
-        if (bm1398_write_register(ctx, chain, false, chip_addr, ASIC_REG_SOFT_RESET,
-                                  SOFT_RESET_MASK) < 0) {
-            fprintf(stderr, "Warning: Soft reset failed for chip %d\n", chip);
-        }
-        usleep(10000);
-
-        // Step 1b: Modify CLK_CTRL (register 0x18)
-        // Write CLK_CTRL value (factory test: 0xF0000000)
-        if (bm1398_write_register(ctx, chain, false, chip_addr, ASIC_REG_CLK_CTRL,
-                                  0xF0000000) < 0) {
-            fprintf(stderr, "Warning: CLK_CTRL write failed for chip %d\n", chip);
-        }
-        usleep(10000);
-
-        // Step 2: Re-configure clock select with clk_sel=0
-        uint32_t core_config_reset = CORE_CONFIG_BASE | ((1 & 3) << CORE_CONFIG_PULSE_MODE_SHIFT);
-        printf("    Chip %d: Re-config clock select (clk_sel=0)...\n", chip);
-        if (bm1398_write_register(ctx, chain, false, chip_addr, ASIC_REG_CORE_CONFIG,
-                                  core_config_reset) < 0) {
-            fprintf(stderr, "Warning: Clock select reset failed for chip %d\n", chip);
-        }
-        usleep(10000);
-
-        // Step 3: Re-configure timing parameters
-        printf("    Chip %d: Re-config timing params...\n", chip);
-        if (bm1398_write_register(ctx, chain, false, chip_addr, ASIC_REG_CORE_PARAM,
-                                  core_param) < 0) {
-            fprintf(stderr, "Warning: Timing param reset failed for chip %d\n", chip);
-        }
-        usleep(10000);
-
-        // Step 4: Core enable (register 0x3C with 0x800082AA)
-        printf("    Chip %d: Core enable...\n", chip);
-        if (bm1398_write_register(ctx, chain, false, chip_addr, ASIC_REG_CORE_CONFIG,
-                                  CORE_CONFIG_ENABLE) < 0) {
-            fprintf(stderr, "Warning: Core enable failed for chip %d\n", chip);
-        }
-        usleep(10000);
+    // Step 1a: Soft reset control (register 0xA8) - broadcast
+    printf("    Broadcast soft reset (reg 0xA8)...\n");
+    if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_SOFT_RESET,
+                              SOFT_RESET_MASK) < 0) {
+        fprintf(stderr, "Warning: Soft reset broadcast failed\n");
     }
+    usleep(100000);  // 100ms settle time
+
+    // Step 1b: Modify CLK_CTRL (register 0x18) - broadcast
+    printf("    Broadcast CLK_CTRL (reg 0x18)...\n");
+    if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL,
+                              0xF0000000) < 0) {
+        fprintf(stderr, "Warning: CLK_CTRL broadcast failed\n");
+    }
+    usleep(100000);  // 100ms settle time
+
+    // Step 2: Re-configure clock select with clk_sel=0 - broadcast
+    uint32_t core_config_reset = CORE_CONFIG_BASE | ((1 & 3) << CORE_CONFIG_PULSE_MODE_SHIFT);
+    printf("    Broadcast clock select reset (clk_sel=0)...\n");
+    if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CORE_CONFIG,
+                              core_config_reset) < 0) {
+        fprintf(stderr, "Warning: Clock select reset broadcast failed\n");
+    }
+    usleep(100000);  // 100ms settle time
+
+    // Step 3: Re-configure timing parameters - broadcast
+    printf("    Broadcast timing params...\n");
+    if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CORE_PARAM,
+                              core_param) < 0) {
+        fprintf(stderr, "Warning: Timing param reset broadcast failed\n");
+    }
+    usleep(100000);  // 100ms settle time
+
+    // Step 4: Core enable (register 0x3C with 0x800082AA) - broadcast
+    printf("    Broadcast core enable...\n");
+    if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CORE_CONFIG,
+                              CORE_CONFIG_ENABLE) < 0) {
+        fprintf(stderr, "Warning: Core enable broadcast failed\n");
+    }
+    usleep(100000);  // 100ms settle time
+
     printf("  Core reset sequence complete\n");
-    usleep(1000000);  // 1 second settle time
+    usleep(500000);  // 500ms additional settle time
 
     // 7b. Set FPGA nonce timeout based on frequency
     // Formula from factory test: timeout = 0x1FFFF / freq_mhz
     // For 525 MHz: timeout = 0x1FFFF / 525 ≈ 251
+    // CRITICAL: Factory test writes timeout to register 20 which maps to offset 0x08C, NOT 0x014!
+    // Register 0x014 is not in the factory test mapping table and appears read-only
+    // Register 0x08C appears to be dual-purpose (baud/clock + timeout)
+    // Strategy: Read existing value, preserve upper bits, set timeout in lower 17 bits + enable bit
     uint32_t timeout_val = 0x1FFFF / FREQUENCY_525MHZ;
     if (timeout_val > 0x1FFFF) timeout_val = 0x1FFFF;  // Clamp to max
-    uint32_t timeout_reg = timeout_val | 0x80000000;
+
+    // Read current register value to preserve other configuration
+    uint32_t current_val = ctx->fpga_regs[0x08C / 4];
+    printf("  Current reg[0x08C] = 0x%08X\n", current_val);
+
+    // Merge: keep bits 17-30, set timeout in bits 0-16, set enable bit 31
+    uint32_t timeout_reg = (current_val & 0x7FFE0000) | (timeout_val & 0x1FFFF) | 0x80000000;
     printf("  Setting FPGA nonce timeout = 0x%08X (timeout=%u)...\n", timeout_reg, timeout_val);
-    ctx->fpga_regs[REG_NONCE_TIMEOUT] = timeout_reg;
+    printf("  Writing merged value to offset 0x08C...\n");
+    ctx->fpga_regs[0x08C / 4] = timeout_reg;
     __sync_synchronize();
+    usleep(10000);
+    printf("  Verifying write: reg[0x08C] = 0x%08X\n", ctx->fpga_regs[0x08C / 4]);
     usleep(10000);
 
     // 8. Set final ticket mask
@@ -646,7 +657,7 @@ int bm1398_init_chain(bm1398_context_t *ctx, int chain) {
  * Note: This is a simplified implementation. Full implementation requires
  * reading CLK_CTRL register, modifying specific bits, and writing back.
  *
- * Source: LiLei single_board_test.c lines 27479-27527
+ * Source: Bitmain single_board_test.c lines 27479-27527
  */
 int bm1398_set_baud_rate(bm1398_context_t *ctx, int chain, uint32_t baud_rate) {
     if (!ctx || !ctx->initialized) {
@@ -804,7 +815,7 @@ int bm1398_get_crc_error_count(bm1398_context_t *ctx) {
 
 /**
  * Enable work send (FPGA control register)
- * Source: LiLei enable_work_send()
+ * Source: Bitmain enable_work_send()
  */
 int bm1398_enable_work_send(bm1398_context_t *ctx) {
     if (!ctx || !ctx->initialized) {
@@ -818,7 +829,7 @@ int bm1398_enable_work_send(bm1398_context_t *ctx) {
 
 /**
  * Start FPGA work generation
- * Source: LiLei start_dhash_work_gen()
+ * Source: Bitmain start_dhash_work_gen()
  */
 int bm1398_start_work_gen(bm1398_context_t *ctx) {
     if (!ctx || !ctx->initialized) {
@@ -835,7 +846,7 @@ int bm1398_start_work_gen(bm1398_context_t *ctx) {
  * Check if work FIFO has space available
  * Returns: Available buffer space, or -1 on error
  *
- * Source: LiLei single_board_test.c line 6220 (is_work_fifo_ready)
+ * Source: Bitmain single_board_test.c line 6220 (is_work_fifo_ready)
  */
 int bm1398_check_work_fifo_ready(bm1398_context_t *ctx) {
     if (!ctx || !ctx->initialized) {
@@ -848,7 +859,7 @@ int bm1398_check_work_fifo_ready(bm1398_context_t *ctx) {
 /**
  * Send work to ASIC chain via FPGA
  *
- * Source: LiLei single_board_test.c software_pattern_4_midstate_send_function
+ * Source: Bitmain single_board_test.c software_pattern_4_midstate_send_function
  *         and set_TW_write_command
  */
 int bm1398_send_work(bm1398_context_t *ctx, int chain, uint32_t work_id,
@@ -907,7 +918,7 @@ int bm1398_send_work(bm1398_context_t *ctx, int chain, uint32_t work_id,
 /**
  * Get number of nonces in FPGA FIFO
  *
- * Source: LiLei single_board_test.c get_nonce_number_in_fifo
+ * Source: Bitmain single_board_test.c get_nonce_number_in_fifo
  */
 int bm1398_get_nonce_count(bm1398_context_t *ctx) {
     if (!ctx || !ctx->initialized) {
@@ -921,7 +932,7 @@ int bm1398_get_nonce_count(bm1398_context_t *ctx) {
 /**
  * Read single nonce from FPGA FIFO
  *
- * Source: LiLei single_board_test.c get_return_nonce
+ * Source: Bitmain single_board_test.c get_return_nonce
  */
 int bm1398_read_nonce(bm1398_context_t *ctx, nonce_response_t *nonce) {
     if (!ctx || !ctx->initialized || !nonce) {

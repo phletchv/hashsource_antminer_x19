@@ -122,7 +122,7 @@ struct uart_cmd_addr {
 
 ## ASIC Register Map
 
-### BM1398 Registers (from LiLei test fixture analysis)
+### BM1398 Registers (from Bitmain test fixture analysis)
 
 | Register | Name                 | Purpose                                      |
 | -------- | -------------------- | -------------------------------------------- |
@@ -176,7 +176,7 @@ Controls core enable and difficulty filtering:
 
 ## Chain Initialization Sequence
 
-### Stage 1: Hardware Reset (from LiLei single_board_test.c)
+### Stage 1: Hardware Reset (from Bitmain single_board_test.c)
 
 ```c
 void reset_chain_stage_1(int chain) {
@@ -675,7 +675,7 @@ Despite implementing **ALL** factory test initialization steps (16 complete conf
 
 **References**:
 
-- LiLei_WeChat S19_Pro single_board_test.c (decompiled)
+- Bitmain_Test_Fixtures S19_Pro single_board_test.c (decompiled)
   - pt_before_send_nonce() - Main pattern test sequence
   - set_register_stage_1/2/3() - Initialization stages
   - do_core_reset() - Post-baud rate reset sequence

@@ -170,10 +170,10 @@ int check_pattern_nonce(uint32_t received_nonce, int asic_id,
 
 ## Available Pattern Files
 
-Found in LiLei reference:
+Found in Bitmain_Test_Fixtures reference:
 
 ```
-/home/danielsokil/Downloads/LiLei_WeChat/S19_Pro/BM1398-pattern/
+/home/danielsokil/Downloads/Bitmain_Test_Fixtures/S19_Pro/BM1398-pattern/
   - btc-asic-000.bin through btc-asic-127.bin
   - Each file: 565KB (579,072 bytes)
 ```
@@ -241,7 +241,7 @@ ASICs are not returning nonces. Investigating:
 
 ## References
 
-- `LiLei_WeChat/S19_Pro/BM1398-pattern/` - Pattern binary files
+- `/home/danielsokil/Downloads/Bitmain_Test_Fixtures/S19_Pro/BM1398-pattern/` - Pattern binary files
 - `single_board_test.c` - Factory test implementation
 - `BTC_software_pattern_check_nonce()` - Nonce validation logic
 - `parse_bin_file_to_pattern_ex()` - Pattern file parser

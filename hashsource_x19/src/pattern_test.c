@@ -4,7 +4,7 @@
  * Uses pre-generated test patterns with known nonces to verify ASICs
  * can find correct solutions without needing pool connection.
  *
- * Based on LiLei factory test fixture pattern test methodology.
+ * Based on Bitmain factory test fixture pattern test methodology.
  */
 
 #include <stdio.h>
@@ -132,7 +132,7 @@ int send_pattern_work(bm1398_context_t *ctx, int chain,
 
 /**
  * Extract ASIC index and core ID from nonce
- * Based on LiLei get_asic_index_by_nonce() and get_coreid_by_nonce()
+ * Based on Bitmain get_asic_index_by_nonce() and get_coreid_by_nonce()
  */
 void parse_nonce_info(uint32_t nonce, int address_interval,
                      int *asic_id, int *core_id) {

@@ -22,7 +22,7 @@ This document catalogs all reference projects available for implementing BM13xx 
 | Project                       | Type                   | ASIC Chips                                | Protocol Info | Init Sequence | Work Format | Nonce Format | Priority     |
 | ----------------------------- | ---------------------- | ----------------------------------------- | ------------- | ------------- | ----------- | ------------ | ------------ |
 | **Bitmain_Peek/S19_Pro**      | Decompiled firmware    | BM1360/BM1362/BM1398                      | Complete      | Complete      | Complete    | Complete     | 5 (Critical) |
-| **LiLei_WeChat**              | Test fixtures          | BM1360/BM1362/BM1366/BM1368/BM1370/BM1398 | Complete      | Complete      | Complete    | Complete     | 5 (Critical) |
+| **Bitmain_Test_Fixtures**     | Test fixtures          | BM1360/BM1362/BM1366/BM1368/BM1370/BM1398 | Complete      | Complete      | Complete    | Complete     | 5 (Critical) |
 | **bm1397-protocol**           | Rust library           | BM1397                                    | Complete      | Complete      | Complete    | Complete     | 4 (High)     |
 | **bm13xx-hla**                | Logic analyzer decoder | BM1360/BM1362/BM1366/BM1368/BM1370/BM1397 | Complete      | Partial       | Complete    | Complete     | 4 (High)     |
 | **bm13xx-rs**                 | Rust library           | BM1366/BM1370/BM1397                      | Complete      | Complete      | Complete    | Complete     | 4 (High)     |
@@ -109,9 +109,9 @@ etc/topol.conf (3 variants) - ASIC addressing, topology
 
 ---
 
-### 2. LiLei_WeChat
+### 2. Bitmain_Test_Fixtures
 
-**Location:** `/home/danielsokil/Downloads/LiLei_WeChat`
+**Location:** `/home/danielsokil/Downloads/Bitmain_Test_Fixtures`
 
 **Project Type:** Bitmain test fixture firmware collection (factory board test software)
 
@@ -1188,16 +1188,16 @@ grep -r "init\|reset\|config" *.c | head -50
 
 ### Reference Project Usage Guide
 
-| Task                 | Primary Reference      | Secondary References   |
-| -------------------- | ---------------------- | ---------------------- |
-| **Protocol basics**  | bm1397-protocol (Rust) | skot/BM1397 docs       |
-| **BM1362 init**      | kanoi/cgminer          | bm13xx-rs              |
-| **BM1398 init**      | LiLei_WeChat S19_Pro   | Bitmain_Peek S19_Pro   |
-| **FPGA interface**   | bitmaintech            | bmminer_NBP1901        |
-| **Work format**      | bm13xx-hla (decoder)   | LiLei_WeChat patterns  |
-| **Nonce parsing**    | bm1397-protocol        | cgminer driver-gekko   |
-| **CRC algorithms**   | bm1397-protocol/crc.rs | Multiple sources       |
-| **Frequency tuning** | cgminer driver-btm-soc | bitmaintech PLL tables |
+| Task                 | Primary Reference             | Secondary References           |
+| -------------------- | ----------------------------- | ------------------------------ |
+| **Protocol basics**  | bm1397-protocol (Rust)        | skot/BM1397 docs               |
+| **BM1362 init**      | kanoi/cgminer                 | bm13xx-rs                      |
+| **BM1398 init**      | Bitmain_Test_Fixtures S19_Pro | Bitmain_Peek S19_Pro           |
+| **FPGA interface**   | bitmaintech                   | bmminer_NBP1901                |
+| **Work format**      | bm13xx-hla (decoder)          | Bitmain_Test_Fixtures patterns |
+| **Nonce parsing**    | bm1397-protocol               | cgminer driver-gekko           |
+| **CRC algorithms**   | bm1397-protocol/crc.rs        | Multiple sources               |
+| **Frequency tuning** | cgminer driver-btm-soc        | bitmaintech PLL tables         |
 
 ### Critical Questions to Answer
 
@@ -1222,17 +1222,17 @@ grep -r "init\|reset\|config" *.c | head -50
 
 | Chip       | Miners            | Protocol Refs                                           | Init Sequences   | Work Format      | Status   |
 | ---------- | ----------------- | ------------------------------------------------------- | ---------------- | ---------------- | -------- |
-| **BM1360** | S19i, S19j Pro    | Bitmain_Peek, LiLei, bitmain_antminer_binaries          | Complete         | Complete         | Ready    |
-| **BM1362** | S19j Pro+         | cgminer [KEY], LiLei, Bitmain_Peek, bm13xx-hla          | Complete         | Complete         | Ready    |
+| **BM1360** | S19i, S19j Pro    | Bitmain_Peek, Bitmain, bitmain_antminer_binaries        | Complete         | Complete         | Ready    |
+| **BM1362** | S19j Pro+         | cgminer [KEY], Bitmain, Bitmain_Peek, bm13xx-hla        | Complete         | Complete         | Ready    |
 | **BM1366** | S19 XP, S19K Pro  | bm13xx-rs [KEY], skot/BM1397, bitmain_antminer_binaries | Complete         | Complete         | Ready    |
-| **BM1368** | S21, S21+         | LiLei [KEY], bm13xx-hla                                 | Complete         | Complete         | Ready    |
-| **BM1370** | S21 Pro, S21 XP   | cgminer [KEY], bm13xx-rs, LiLei, bm13xx-hla             | Complete         | Complete         | Ready    |
+| **BM1368** | S21, S21+         | Bitmain [KEY], bm13xx-hla                               | Complete         | Complete         | Ready    |
+| **BM1370** | S21 Pro, S21 XP   | cgminer [KEY], bm13xx-rs, Bitmain, bm13xx-hla           | Complete         | Complete         | Ready    |
 | **BM1384** | Terminus          | cgminer                                                 | Complete         | Complete         | Ready    |
 | **BM1387** | S9, T9, R4        | bitmaintech [KEY], cgminer, bitmain_antminer_binaries   | Complete         | Complete         | Ready    |
 | **BM1397** | S17, T17          | bm1397-protocol [KEY], skot/BM1397 [KEY], cgminer       | Complete         | Complete         | Ready    |
-| **BM1398** | S19, S19 Pro, T19 | LiLei [KEY], Bitmain_Peek, bmminer_NBP1901              | Needs extraction | Needs extraction | Research |
+| **BM1398** | S19, S19 Pro, T19 | Bitmain [KEY], Bitmain_Peek, bmminer_NBP1901            | Needs extraction | Needs extraction | Research |
 
-**For BM1398 (S19 Pro):** Primary references are LiLei_WeChat S19_Pro and Bitmain_Peek S19_Pro. BM1362 protocol from cgminer likely 80-90% compatible.
+**For BM1398 (S19 Pro):** Primary references are Bitmain_Test_Fixtures S19_Pro and Bitmain_Peek S19_Pro. BM1362 protocol from cgminer likely 80-90% compatible.
 
 ---
 
@@ -1256,7 +1256,7 @@ grep -r "init\|reset\|config" *.c | head -50
 ```bash
 # Stock Firmware Analysis
 /home/danielsokil/Downloads/Bitmain_Peek/S19_Pro/
-/home/danielsokil/Downloads/LiLei_WeChat/S19_Pro/
+/home/danielsokil/Downloads/Bitmain_Test_Fixtures/S19_Pro/
 
 # Protocol Documentation
 /home/danielsokil/Lab/skot/BM1397/

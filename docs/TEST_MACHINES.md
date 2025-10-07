@@ -3,19 +3,13 @@
 ## 1
 
 - HashSource
-- 192.30.1.24
+- 192.168.1.27
 - SSH User/Pass: root/root
 
 ## 2
 
-- HashSource
-- 192.168.1.27
-- SSH User/Pass: root/root
-
-## 3
-
 - Bitmain Stock Firmware
-- 192.30.1.176
+- 192.168.1.35
 - SSH User/Pass: miner/miner
 
 Use sshpass when connecting with password, it's installed
