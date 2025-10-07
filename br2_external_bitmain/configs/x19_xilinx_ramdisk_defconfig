@@ -83,6 +83,9 @@ BR2_PACKAGE_HOST_DOSFSTOOLS=y
 # Custom X19 packages
 # NOTE: Stock kernel modules are in rootfs-overlay, not built from source
 BR2_PACKAGE_HASHSOURCE_X19=y
+# Rust package (production deployment)
+BR2_PACKAGE_HOST_RUSTC=y
+BR2_PACKAGE_HASHSOURCE_X19_RS=y
 
 # Build scripts
 BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_X19_BITMAIN_PATH)/board/x19_xilinx/post-build.sh"

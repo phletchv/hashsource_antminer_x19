@@ -1,12 +1,9 @@
 config BR2_PACKAGE_HASHSOURCE_X19
-	bool "hashsource_x19"
+	bool "hashsource_x19 (C build only)"
 	help
-	  HashSource custom mining software and utilities for Bitmain X19 series:
-	  - hashsource_miner: Main mining application (WIP)
-	  - fan_test: Hardware test utility for fan PWM control
-	  - psu_test: APW12 PSU voltage control test
-	  - fpga_logger: FPGA register monitoring tool
+	  HashSource custom mining software (C implementation)
 
-	  Supports: X19 (Xilinx Zynq platform)
+	  NOTE: Builds C binaries for reference but does NOT install
+	  to rootfs. Use hashsource_x19_rs for production.
 
-	  Uses stock kernel modules (no custom kernel build required).
+	  Supports X19 Xilinx Zynq platform.
