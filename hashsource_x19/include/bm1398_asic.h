@@ -25,6 +25,7 @@
 #define REG_HASH_ON_PLUG            (0x008 / 4)
 #define REG_BUFFER_SPACE            (0x00C / 4)
 #define REG_RETURN_NONCE            (0x010 / 4)
+#define REG_NONCE_TIMEOUT           (0x014 / 4)  // Nonce return timeout
 #define REG_NONCE_NUMBER_IN_FIFO    (0x018 / 4)
 #define REG_NONCE_FIFO_INTERRUPT    (0x01C / 4)
 #define REG_IIC_COMMAND             (0x030 / 4)
@@ -66,15 +67,29 @@
 #define ASIC_REG_CORE_CONFIG        0x3C
 #define ASIC_REG_CORE_PARAM         0x44
 #define ASIC_REG_DIODE_MUX          0x54
+#define ASIC_REG_IO_DRIVER          0x58
 #define ASIC_REG_PLL_PARAM_1        0x60
 #define ASIC_REG_PLL_PARAM_2        0x64
 #define ASIC_REG_PLL_PARAM_3        0x68
 #define ASIC_REG_VERSION_ROLLING    0xA4
+#define ASIC_REG_SOFT_RESET         0xA8
 
 // Core configuration values
 #define CORE_CONFIG_BASE            0x80008700
 #define CORE_CONFIG_PULSE_MODE_SHIFT 4
 #define CORE_CONFIG_CLK_SEL_MASK    0x7
+#define CORE_CONFIG_ENABLE          0x800082AA   // Core enable after reset
+#define CORE_CONFIG_NONCE_OVF_DIS   0x80008D15   // Nonce overflow disabled
+
+// Soft reset control values
+#define SOFT_RESET_MASK             0x1F0        // Soft reset bits
+
+// Core timing parameters (register 0x44)
+#define CORE_PARAM_SWPF_MODE_BIT    0       // Bit 0: swpf_mode
+#define CORE_PARAM_PWTH_SEL_SHIFT   3       // Bits 3-5: pwth_sel
+#define CORE_PARAM_CCDLY_SEL_SHIFT  6       // Bits 6+: ccdly_sel
+#define CORE_PARAM_PWTH_SEL_MASK    0x7
+#define CORE_PARAM_CCDLY_SEL_MASK   0x3
 
 // Ticket mask values
 #define TICKET_MASK_ALL_CORES       0xFFFFFFFF

@@ -468,6 +468,35 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     }
     usleep(10000);
 
+    // 4b. Set core timing parameters (pwth_sel=1, ccdly_sel=0, swpf_mode=0)
+    // From Config.ini: Pwth_Sel=1, CCdly_Sel=0
+    uint8_t pwth_sel = 1;
+    uint8_t ccdly_sel = 0;
+    uint8_t swpf_mode = 0;
+    uint32_t core_param = ((pwth_sel & CORE_PARAM_PWTH_SEL_MASK) << CORE_PARAM_PWTH_SEL_SHIFT) |
+                          ((ccdly_sel & CORE_PARAM_CCDLY_SEL_MASK) << CORE_PARAM_CCDLY_SEL_SHIFT);
+    if (swpf_mode != 0) {
+        core_param |= (1 << CORE_PARAM_SWPF_MODE_BIT);
+    }
+    printf("  Setting core timing params = 0x%08X (pwth_sel=%u, ccdly_sel=%u, swpf_mode=%u)...\n",
+           core_param, pwth_sel, ccdly_sel, swpf_mode);
+    if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CORE_PARAM,
+                              core_param) < 0) {
+        fprintf(stderr, "Error: Failed to set core timing parameters\n");
+        return -1;
+    }
+    usleep(10000);
+
+    // 4c. Set IO driver strength for clock output (clko_ds=1)
+    // Register 0x58: Modify bits [7:4] to set clko_ds
+    printf("  Setting IO driver clock output strength (clko_ds=1)...\n");
+    uint32_t io_driver = 0x10;  // clko_ds=1 in bits [7:4]
+    if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_IO_DRIVER,
+                              io_driver) < 0) {
+        fprintf(stderr, "Warning: IO driver configuration failed\n");
+    }
+    usleep(10000);
+
     // 5. Set PLL dividers to 0
     printf("  Setting PLL dividers...\n");
     bm1398_write_register(ctx, chain, true, 0, ASIC_REG_PLL_PARAM_0, 0x00000000);
@@ -493,12 +522,82 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     }
     usleep(50000);
 
+    // 7a. Core reset sequence (critical for nonce reception)
+    // This follows factory test do_core_reset() sequence
+    printf("  Performing core reset sequence...\n");
+    for (int chip = 0; chip < num_chips; chip++) {
+        uint8_t chip_addr = chip * CHIP_ADDRESS_INTERVAL;
+
+        // Step 1a: Soft reset control (register 0xA8)
+        // Write soft reset bits (factory test ORs with 0x1F0)
+        if (bm1398_write_register(ctx, chain, false, chip_addr, ASIC_REG_SOFT_RESET,
+                                  SOFT_RESET_MASK) < 0) {
+            fprintf(stderr, "Warning: Soft reset failed for chip %d\n", chip);
+        }
+        usleep(10000);
+
+        // Step 1b: Modify CLK_CTRL (register 0x18)
+        // Write CLK_CTRL value (factory test: 0xF0000000)
+        if (bm1398_write_register(ctx, chain, false, chip_addr, ASIC_REG_CLK_CTRL,
+                                  0xF0000000) < 0) {
+            fprintf(stderr, "Warning: CLK_CTRL write failed for chip %d\n", chip);
+        }
+        usleep(10000);
+
+        // Step 2: Re-configure clock select with clk_sel=0
+        uint32_t core_config_reset = CORE_CONFIG_BASE | ((1 & 3) << CORE_CONFIG_PULSE_MODE_SHIFT);
+        printf("    Chip %d: Re-config clock select (clk_sel=0)...\n", chip);
+        if (bm1398_write_register(ctx, chain, false, chip_addr, ASIC_REG_CORE_CONFIG,
+                                  core_config_reset) < 0) {
+            fprintf(stderr, "Warning: Clock select reset failed for chip %d\n", chip);
+        }
+        usleep(10000);
+
+        // Step 3: Re-configure timing parameters
+        printf("    Chip %d: Re-config timing params...\n", chip);
+        if (bm1398_write_register(ctx, chain, false, chip_addr, ASIC_REG_CORE_PARAM,
+                                  core_param) < 0) {
+            fprintf(stderr, "Warning: Timing param reset failed for chip %d\n", chip);
+        }
+        usleep(10000);
+
+        // Step 4: Core enable (register 0x3C with 0x800082AA)
+        printf("    Chip %d: Core enable...\n", chip);
+        if (bm1398_write_register(ctx, chain, false, chip_addr, ASIC_REG_CORE_CONFIG,
+                                  CORE_CONFIG_ENABLE) < 0) {
+            fprintf(stderr, "Warning: Core enable failed for chip %d\n", chip);
+        }
+        usleep(10000);
+    }
+    printf("  Core reset sequence complete\n");
+    usleep(1000000);  // 1 second settle time
+
+    // 7b. Set FPGA nonce timeout based on frequency
+    // Formula from factory test: timeout = 0x1FFFF / freq_mhz
+    // For 525 MHz: timeout = 0x1FFFF / 525 ≈ 251
+    uint32_t timeout_val = 0x1FFFF / FREQUENCY_525MHZ;
+    if (timeout_val > 0x1FFFF) timeout_val = 0x1FFFF;  // Clamp to max
+    uint32_t timeout_reg = timeout_val | 0x80000000;
+    printf("  Setting FPGA nonce timeout = 0x%08X (timeout=%u)...\n", timeout_reg, timeout_val);
+    ctx->fpga_regs[REG_NONCE_TIMEOUT] = timeout_reg;
+    __sync_synchronize();
+    usleep(10000);
+
     // 8. Set final ticket mask
     printf("  Setting final ticket mask = 0xFF...\n");
     if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_TICKET_MASK,
                               TICKET_MASK_256_CORES) < 0) {
         fprintf(stderr, "Error: Failed to set final ticket mask\n");
         return -1;
+    }
+    usleep(10000);
+
+    // 9. Set nonce overflow control (disable overflow)
+    // Register 0x3C: Final configuration with nonce overflow disabled
+    printf("  Setting nonce overflow control (disabled)...\n");
+    if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CORE_CONFIG,
+                              CORE_CONFIG_NONCE_OVF_DIS) < 0) {
+        fprintf(stderr, "Warning: Nonce overflow control failed\n");
     }
     usleep(10000);
 

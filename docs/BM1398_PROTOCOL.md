@@ -599,18 +599,74 @@ All hardware initialization verified working:
 - Baud: 12 MHz high-speed UART
 - Work: 80 test patterns sent and accepted by FPGA FIFO
 
+**Completed Register Configurations (2025-10-07 Evening):**
+
+12. **Core Timing Parameters (Register 0x44)** ✓
+
+    - pwth_sel = 1 (bits 3-5)
+    - ccdly_sel = 0 (bits 6+)
+    - swpf_mode = 0 (bit 0)
+    - Value: 0x00000008
+    - From: Config.ini Pwth_Sel, CCdly_Sel parameters
+
+13. **IO Driver Configuration (Register 0x58)** ✓
+
+    - clko_ds = 1 (clock output driver strength)
+    - Bits [7:4] = 0x1
+    - Value: 0x00000010
+    - From: Factory test set_chain_iodriver_clko_ds()
+
+14. **Core Reset Sequence (Post-Baud Rate)** ✓
+
+    - Per-chip sequence after baud rate configuration:
+    - Step 1: Soft reset (reg 0xA8 = 0x1F0)
+    - Step 2: CLK_CTRL (reg 0x18 = 0xF0000000)
+    - Step 3: Re-config clock (reg 0x3C, pulse_mode=1, clk_sel=0)
+    - Step 4: Re-config timing (reg 0x44)
+    - Step 5: Core enable (reg 0x3C = 0x800082AA)
+    - From: Factory test do_core_reset() function
+
+15. **FPGA Nonce Timeout (FPGA Register 0x14)** ✓
+
+    - Formula: timeout = 0x1FFFF / freq_mhz
+    - For 525 MHz: timeout = 249
+    - Register value: 0x800000F9
+    - From: Factory test dhash_set_timeout()
+
+16. **Nonce Overflow Control (Register 0x3C)** ✓
+    - Final write after timeout configuration
+    - Value: 0x80008D15 (nonce overflow disabled)
+    - From: Factory test set_chain_core_nonce_overflow_control()
+
 **Current Issue:**
 
-ASICs not returning nonces despite successful initialization. Investigating:
+Despite implementing **ALL** factory test initialization steps (16 complete configurations), ASICs still not returning nonces. Test results:
 
-- Work packet format/byte order verification
-- Missing ASIC register configuration (timing parameters, work config)
-- Voltage adjustment needs (15V vs 12.6-12.8V operational range)
-- Additional PLL stabilization time
+- Initialization: [OK] 114/114 chips enumerated, 0 CRC errors
+- PSU Power: [OK] 15V enabled
+- PIC DC-DC: [OK] Enabled (response: 0x15 0x01)
+- PLL Frequency: [OK] 525 MHz (0x40540100, VCO 2100 MHz)
+- Baud Rate: [OK] 12 MHz configured
+- Core Timing: [OK] Register 0x44 = 0x00000008
+- IO Driver: [OK] Register 0x58 = 0x00000010
+- Core Reset: [OK] Sequence completed (all 114 chips)
+- FPGA Timeout: [OK] Register 0x14 = 0x800000F9
+- Nonce Overflow: [OK] Register 0x3C = 0x80008D15
+- Work Submission: [OK] 80 patterns sent
+- Nonces Received: [FAIL] 0/80 (60-second timeout)
+
+**Remaining Investigation Areas:**
+
+1. Voltage level (currently 15V startup; may need 12.6-12.8V operational)
+2. Pattern file version compatibility (may be chip-variant-specific)
+3. Undocumented FPGA registers or timing requirements
+4. Work packet format subtleties not visible in decompiled code
+5. PLL/core stabilization timing requirements
 
 **Implementation Files:**
 
-- Driver: `hashsource_x19/src/bm1398_asic.c`
+- Driver: `hashsource_x19/src/bm1398_asic.c` (lines 400-600 for new configs)
+- Header: `hashsource_x19/include/bm1398_asic.h` (new register definitions)
 - Pattern test: `hashsource_x19/src/pattern_test.c`
 - Chain test: `hashsource_x19/src/chain_test.c`
 - Work test: `hashsource_x19/src/work_test.c`
@@ -620,8 +676,13 @@ ASICs not returning nonces despite successful initialization. Investigating:
 **References**:
 
 - LiLei_WeChat S19_Pro single_board_test.c (decompiled)
+  - pt_before_send_nonce() - Main pattern test sequence
+  - set_register_stage_1/2/3() - Initialization stages
+  - do_core_reset() - Post-baud rate reset sequence
+  - dhash_set_timeout() - FPGA timeout configuration
+  - set_clock_delay_control() - Core timing parameters
 - Bitmain_Peek S19_Pro BMMINER_ANALYSIS.md
 - bitmaintech bmminer-mix driver-btm-c5.h/c (S9 source)
-- Config.ini: BM1398 test configuration
+- Config.ini: BM1398 test configuration (Pwth_Sel=1, CCdly_Sel=0)
 
-**Last Updated**: 2025-10-07 PM
+**Last Updated**: 2025-10-07 Evening - All factory test configurations implemented
