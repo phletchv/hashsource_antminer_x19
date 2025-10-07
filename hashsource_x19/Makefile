@@ -27,6 +27,9 @@ FPGA_LOGGER = $(BIN_DIR)/fpga_logger
 PSU_TEST = $(BIN_DIR)/psu_test
 ID2MAC = $(BIN_DIR)/id2mac
 EEPROM_DETECT = $(BIN_DIR)/eeprom_detect
+CHAIN_TEST = $(BIN_DIR)/chain_test
+WORK_TEST = $(BIN_DIR)/work_test
+PATTERN_TEST = $(BIN_DIR)/pattern_test
 
 # Source files for main miner
 SRCS = $(SRC_DIR)/main.c
@@ -46,6 +49,15 @@ ID2MAC_SRCS = $(SRC_DIR)/id2mac.c
 # Source files for eeprom_detect
 EEPROM_DETECT_SRCS = $(SRC_DIR)/eeprom_detect.c
 
+# Source files for chain_test (includes BM1398 driver)
+CHAIN_TEST_SRCS = $(SRC_DIR)/chain_test.c $(SRC_DIR)/bm1398_asic.c
+
+# Source files for work_test (includes BM1398 driver)
+WORK_TEST_SRCS = $(SRC_DIR)/work_test.c $(SRC_DIR)/bm1398_asic.c
+
+# Source files for pattern_test (includes BM1398 driver)
+PATTERN_TEST_SRCS = $(SRC_DIR)/pattern_test.c $(SRC_DIR)/bm1398_asic.c
+
 # Object files
 OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(SRCS)))
 FAN_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(FAN_SRCS)))
@@ -53,6 +65,9 @@ LOGGER_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(LOGGER_SRCS)))
 PSU_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(PSU_SRCS)))
 ID2MAC_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(ID2MAC_SRCS)))
 EEPROM_DETECT_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(EEPROM_DETECT_SRCS)))
+CHAIN_TEST_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(CHAIN_TEST_SRCS)))
+WORK_TEST_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(WORK_TEST_SRCS)))
+PATTERN_TEST_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(PATTERN_TEST_SRCS)))
 
 # Compiler flags
 CFLAGS = -Wall -Wextra -O2 -g
@@ -64,7 +79,7 @@ CFLAGS += -D_GNU_SOURCE
 LDFLAGS = -pthread -lm -lrt
 
 # Default target
-all: dirs $(TARGET) $(FAN_TEST) $(FPGA_LOGGER) $(PSU_TEST) $(ID2MAC) $(EEPROM_DETECT)
+all: dirs $(TARGET) $(FAN_TEST) $(FPGA_LOGGER) $(PSU_TEST) $(ID2MAC) $(EEPROM_DETECT) $(CHAIN_TEST) $(WORK_TEST) $(PATTERN_TEST)
 
 # Create directories
 dirs:
@@ -114,6 +129,30 @@ $(ID2MAC): $(ID2MAC_OBJS)
 $(EEPROM_DETECT): $(EEPROM_DETECT_OBJS)
 	@echo "Linking $@"
 	$(CC) $(EEPROM_DETECT_OBJS) -o $@ $(LDFLAGS)
+	@echo "Stripping $@"
+	$(STRIP) $@
+	@echo "Build complete: $@"
+
+# Build chain_test (includes BM1398 driver)
+$(CHAIN_TEST): $(CHAIN_TEST_OBJS)
+	@echo "Linking $@"
+	$(CC) $(CHAIN_TEST_OBJS) -o $@ $(LDFLAGS)
+	@echo "Stripping $@"
+	$(STRIP) $@
+	@echo "Build complete: $@"
+
+# Build work_test (includes BM1398 driver)
+$(WORK_TEST): $(WORK_TEST_OBJS)
+	@echo "Linking $@"
+	$(CC) $(WORK_TEST_OBJS) -o $@ $(LDFLAGS)
+	@echo "Stripping $@"
+	$(STRIP) $@
+	@echo "Build complete: $@"
+
+# Build pattern_test (includes BM1398 driver)
+$(PATTERN_TEST): $(PATTERN_TEST_OBJS)
+	@echo "Linking $@"
+	$(CC) $(PATTERN_TEST_OBJS) -o $@ $(LDFLAGS)
 	@echo "Stripping $@"
 	$(STRIP) $@
 	@echo "Build complete: $@"

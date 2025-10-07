@@ -23,28 +23,28 @@ endef
 # Rust version (hashsource_x19_rs) in production.
 #
 # To re-enable C binary installation, uncomment the section below:
-#
-# define HASHSOURCE_X19_INSTALL_TARGET_CMDS
-# 	$(INSTALL) -D -m 0755 $(@D)/bin/fan_test \
-# 		$(TARGET_DIR)/usr/bin/fan_test
-# 	$(INSTALL) -D -m 0755 $(@D)/bin/psu_test \
-# 		$(TARGET_DIR)/usr/bin/psu_test
-# 	$(INSTALL) -D -m 0755 $(@D)/bin/fpga_logger \
-# 		$(TARGET_DIR)/usr/bin/fpga_logger
-# 	$(INSTALL) -D -m 0755 $(@D)/bin/eeprom_detect \
-# 		$(TARGET_DIR)/usr/bin/eeprom_detect
-# 	$(INSTALL) -D -m 0755 $(@D)/bin/hashsource_miner \
-# 		$(TARGET_DIR)/usr/bin/hashsource_miner
-# 	$(INSTALL) -D -m 0755 $(@D)/bin/id2mac \
-# 		$(TARGET_DIR)/usr/bin/id2mac
-# 	if [ -f $(@D)/config/miner.conf ]; then \
-# 		$(INSTALL) -D -m 0644 $(@D)/config/miner.conf \
-# 			$(TARGET_DIR)/etc/miner.conf; \
-# 	fi
-# 	if [ -f $(@D)/config/S90hashsource ]; then \
-# 		$(INSTALL) -D -m 0755 $(@D)/config/S90hashsource \
-# 			$(TARGET_DIR)/etc/init.d/S90hashsource; \
-# 	fi
-# endef
+
+define HASHSOURCE_X19_INSTALL_TARGET_CMDS
+	$(INSTALL) -D -m 0755 $(@D)/bin/fan_test \
+		$(TARGET_DIR)/usr/bin/fan_test
+	$(INSTALL) -D -m 0755 $(@D)/bin/psu_test \
+		$(TARGET_DIR)/usr/bin/psu_test
+	$(INSTALL) -D -m 0755 $(@D)/bin/fpga_logger \
+		$(TARGET_DIR)/usr/bin/fpga_logger
+	$(INSTALL) -D -m 0755 $(@D)/bin/eeprom_detect \
+		$(TARGET_DIR)/usr/bin/eeprom_detect
+	$(INSTALL) -D -m 0755 $(@D)/bin/hashsource_miner \
+		$(TARGET_DIR)/usr/bin/hashsource_miner
+	$(INSTALL) -D -m 0755 $(@D)/bin/id2mac \
+		$(TARGET_DIR)/usr/bin/id2mac
+	if [ -f $(@D)/config/miner.conf ]; then \
+		$(INSTALL) -D -m 0644 $(@D)/config/miner.conf \
+			$(TARGET_DIR)/etc/miner.conf; \
+	fi
+	if [ -f $(@D)/config/S90hashsource ]; then \
+		$(INSTALL) -D -m 0755 $(@D)/config/S90hashsource \
+			$(TARGET_DIR)/etc/init.d/S90hashsource; \
+	fi
+endef
 
 $(eval $(generic-package))

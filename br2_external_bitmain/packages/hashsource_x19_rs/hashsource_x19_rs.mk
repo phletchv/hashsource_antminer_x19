@@ -32,10 +32,10 @@ endef
 HASHSOURCE_X19_RS_PRE_BUILD_HOOKS += HASHSOURCE_X19_RS_VENDOR_DEPENDENCIES
 
 # Installation - binaries are in target/$(RUSTC_TARGET_NAME)/release/
-define HASHSOURCE_X19_RS_INSTALL_TARGET_CMDS
-	$(INSTALL) -D -m 0755 $(@D)/target/$(RUSTC_TARGET_NAME)/release/fan_control \
-		$(TARGET_DIR)/usr/bin/fan_control
-endef
+# define HASHSOURCE_X19_RS_INSTALL_TARGET_CMDS
+# 	$(INSTALL) -D -m 0755 $(@D)/target/$(RUSTC_TARGET_NAME)/release/fan_control \
+# 		$(TARGET_DIR)/usr/bin/fan_control
+# endef
 
 # Use Buildroot's cargo-package infrastructure
 $(eval $(cargo-package))
