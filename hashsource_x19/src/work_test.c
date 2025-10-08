@@ -121,8 +121,11 @@ int main(int argc, char *argv[]) {
     } else {
         printf("Voltage reduced to 12.6V\n");
     }
-    sleep(2);  // Allow voltage to stabilize
-    printf("\n")
+
+    // CRITICAL: Extended stabilization delay after voltage change
+    printf("Waiting 5 seconds for voltage stabilization...\n");
+    sleep(5);
+    printf("\n");
 
     printf("\n");
     printf("====================================\n");

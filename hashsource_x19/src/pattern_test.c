@@ -259,7 +259,11 @@ int main(int argc, char *argv[]) {
     } else {
         printf("Voltage reduced to 12.6V\n");
     }
-    sleep(2);  // Allow voltage to stabilize
+
+    // CRITICAL: Extended stabilization delay after voltage change
+    // ASICs need time to adjust to new voltage before accepting work
+    printf("Waiting 5 seconds for voltage stabilization...\n");
+    sleep(5);
     printf("\n");
 
     // Enable FPGA work distribution

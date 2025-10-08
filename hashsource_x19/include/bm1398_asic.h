@@ -28,9 +28,9 @@
 #define FPGA_REG_CONTROL            0   // Maps to word 0 (0x000)
 #define FPGA_REG_TW_WRITE_CMD_FIRST 16  // Maps to word 16 (0x040) - first word of work
 #define FPGA_REG_TW_WRITE_CMD_REST  17  // Maps to word 16 (0x040) - rest of work (SAME!)
-#define FPGA_REG_FAN_CONTROL        18  // Maps to word 33 (0x084)
+#define FPGA_REG_SPECIAL_18         18  // Maps to word 33 (0x084) - CRITICAL init register
 #define FPGA_REG_TIMEOUT            20  // Maps to word 35 (0x08C) ⚠️ NOT 0x014!
-#define FPGA_REG_WORK_CTRL_ENABLE   35  // Maps to word 70 (0x118)
+#define FPGA_REG_WORK_CTRL_ENABLE   35  // Maps to word 70 (0x118) - Work control/auto-gen
 #define FPGA_REG_CHAIN_WORK_CONFIG  36  // Maps to word 71 (0x11C)
 #define FPGA_REG_WORK_QUEUE_PARAM   42  // Maps to word 80 (0x140)
 

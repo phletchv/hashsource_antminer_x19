@@ -156,6 +156,14 @@ int bm1398_init(bm1398_context_t *ctx) {
     // Source: Binary analysis of bmminer @ 0x45b34 and factory test @ 0x22cf0
     printf("Initializing FPGA registers (using indirect mapping)...\n");
 
+    // CRITICAL: Register 18 initialization (from factory test sub_22b58 @ 0x22b58)
+    // MUST be done BEFORE register 0 bit 30 set!
+    // Factory test writes: 0x80808000 to logical register 18
+    printf("  CRITICAL: Register 18 init...\n");
+    fpga_write_indirect(ctx, FPGA_REG_SPECIAL_18, 0x80808000);
+    printf("  Register 18 (0x084): 0x%08X\n", fpga_read_indirect(ctx, FPGA_REG_SPECIAL_18));
+    usleep(10000);
+
     // FPGA Register 0: Set bit 30 (0x40000000)
     // Source: bmminer FUN_00045b34, factory test FUN_00022cf0
     // Both binaries do: read register 0, OR with 0x40000000, write back
@@ -201,6 +209,37 @@ int bm1398_init(bm1398_context_t *ctx) {
 
     // Direct register initialization (non-mapped registers)
     // These use direct byte offsets and are not in the mapping table
+
+    // CRITICAL: Registers 0x080 and 0x088 initialization
+    // This sequence matches fan_test.c and bmminer initialization
+    // These registers are NOT accessible via indirect mapping!
+    printf("  CRITICAL: Direct FPGA register initialization...\n");
+
+    // Stage 1: Boot-time initialization (matches fan_test.c lines 92-108)
+    ctx->fpga_regs[0x080 / 4] = 0x0080800F;
+    usleep(100000);
+    printf("  Set 0x080 = 0x%08X (boot init)\n", ctx->fpga_regs[0x080 / 4]);
+
+    ctx->fpga_regs[0x088 / 4] = 0x800001C1;
+    usleep(100000);
+    printf("  Set 0x088 = 0x%08X (boot init)\n", ctx->fpga_regs[0x088 / 4]);
+
+    // Stage 2: Bmminer startup sequence (matches fan_test.c lines 114-128)
+    ctx->fpga_regs[0x080 / 4] = 0x8080800F;  // Set bit 31
+    usleep(50000);
+    printf("  Set 0x080 = 0x%08X (bit 31 set)\n", ctx->fpga_regs[0x080 / 4]);
+
+    ctx->fpga_regs[0x088 / 4] = 0x00009C40;
+    usleep(50000);
+    printf("  Set 0x088 = 0x%08X\n", ctx->fpga_regs[0x088 / 4]);
+
+    ctx->fpga_regs[0x080 / 4] = 0x0080800F;  // Clear bit 31
+    usleep(50000);
+    printf("  Set 0x080 = 0x%08X (bit 31 clear)\n", ctx->fpga_regs[0x080 / 4]);
+
+    ctx->fpga_regs[0x088 / 4] = 0x8001FFFF;  // Final config
+    usleep(100000);
+    printf("  Set 0x088 = 0x%08X (final config)\n", ctx->fpga_regs[0x088 / 4]);
 
     // Control registers (0x000-0x01C)
     ctx->fpga_regs[REG_FAN_SPEED] = 0x00000500;  // 0x004: Status register
@@ -547,49 +586,39 @@ int bm1398_reset_chain_stage1(bm1398_context_t *ctx, int chain) {
 
     // Hardware reset sequence verified from Binary Ninja analysis
     // Source: Bitmain single_board_test.c sub_1d07c @ 0x1d07c
+    //
+    // CRITICAL FIX: Factory test doesn't use read-modify-write!
+    // It writes known-good values directly. Register reads don't work
+    // reliably during early initialization.
 
-    // Step 1: Soft reset disable (register 0x18 bit 2 clear)
+    // Step 1: Soft reset disable (register 0x18)
     printf("  Soft reset disable (reg 0x18)...\n");
-    uint32_t reg18 = 0;
-    bm1398_read_register(ctx, chain, false, 0, ASIC_REG_CLK_CTRL, &reg18, 100);
-    reg18 &= ~0x0400;  // Clear bit 2 of BYTE1 (bit 10 overall)
-    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, reg18);
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, 0x00000000);
     usleep(10000);
 
-    // Step 2: Clear power control bit (register 0x34 bit 3)
+    // Step 2: Clear power control bit (register 0x34)
     printf("  Clear power control bit (reg 0x34)...\n");
-    uint32_t reg34 = 0;
-    bm1398_read_register(ctx, chain, false, 0, ASIC_REG_RESET_CTRL, &reg34, 100);
-    reg34 &= ~0x08;  // Clear bit 3
-    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_RESET_CTRL, reg34);
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_RESET_CTRL, 0x00000000);
     usleep(10000);
 
-    // Step 3: Core reset enable (register 0x18 BYTE2 |= 0x40, HIBYTE &= 0x0F)
+    // Step 3: Core reset enable (register 0x18)
     printf("  Core reset enable (reg 0x18)...\n");
-    bm1398_read_register(ctx, chain, false, 0, ASIC_REG_CLK_CTRL, &reg18, 100);
-    reg18 = (reg18 | 0x00400000) & 0x0FFFFFFF;  // BYTE2 |= 0x40, HIBYTE &= 0x0F
-    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, reg18);
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, 0x0F400000);
     usleep(10000);
 
-    // Step 4: Core reset disable (register 0x18 BYTE2 &= ~0x40, HIBYTE |= 0xF0)
+    // Step 4: Core reset disable (register 0x18)
     printf("  Core reset disable (reg 0x18)...\n");
-    bm1398_read_register(ctx, chain, false, 0, ASIC_REG_CLK_CTRL, &reg18, 100);
-    reg18 = (reg18 & ~0x00400000) | 0xF0000000;  // BYTE2 &= ~0x40, HIBYTE |= 0xF0
-    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, reg18);
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, 0xF0000000);
     usleep(10000);
 
-    // Step 5: Soft reset enable (register 0x18 bit 2 set)
+    // Step 5: Soft reset enable (register 0x18)
     printf("  Soft reset enable (reg 0x18)...\n");
-    bm1398_read_register(ctx, chain, false, 0, ASIC_REG_CLK_CTRL, &reg18, 100);
-    reg18 |= 0x0400;  // Set bit 2 of BYTE1 (bit 10 overall)
-    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, reg18);
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, 0xF0000400);
     usleep(10000);
 
-    // Step 6: Set power control bit (register 0x34 bit 3)
+    // Step 6: Set power control bit (register 0x34)
     printf("  Set power control bit (reg 0x34)...\n");
-    bm1398_read_register(ctx, chain, false, 0, ASIC_REG_RESET_CTRL, &reg34, 100);
-    reg34 |= 0x08;  // Set bit 3
-    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_RESET_CTRL, reg34);
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_RESET_CTRL, 0x00000008);
     usleep(10000);
 
     // Step 7: Set ticket mask to all cores enabled (initialization value)
@@ -780,7 +809,12 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     usleep(100000);  // 100ms settle time
 
     printf("  Core reset sequence complete\n");
-    usleep(500000);  // 500ms additional settle time
+
+    // CRITICAL: Long stabilization delay after core reset
+    // Factory test and bmminer both have significant delays here
+    // ASICs need time to stabilize after reset before accepting work
+    printf("  Waiting 2 seconds for core stabilization...\n");
+    sleep(2);
 
     // 7b. Configure FPGA nonce timeout based on chip frequency
     // Factory test: dhash_set_timeout() at sub_222f8
@@ -891,36 +925,19 @@ int bm1398_set_baud_rate(bm1398_context_t *ctx, int chain, uint32_t baud_rate) {
         }
         usleep(10000);
 
-        // Step 2: Configure BAUD_CONFIG register (0x28) - Read-Modify-Write
+        // Step 2: Configure BAUD_CONFIG register (0x28) - Write known-good value
         printf("    Configuring BAUD_CONFIG (reg 0x28) for high-speed mode...\n");
-        if (bm1398_read_register(ctx, chain, false, 0, ASIC_REG_BAUD_CONFIG, &reg_val, 100) == 0) {
-            // Modify bits for high-speed UART mode
-            // Byte 0: Set to 0x0F (base config)
-            // Byte 1: Set bit 7, keep lower bits
-            // Byte 2: Set to 0x06 (high-speed mode selector)
-            reg_val = (reg_val & 0xFF000000) |  // Keep byte 3
-                      0x0000000F |               // Byte 0: 0x0F
-                      ((((reg_val >> 8) | 0x80) & 0x8F) << 8) |  // Byte 1: set bit 7
-                      (((reg_val >> 16) & 0x30) | 0x06) << 16;   // Byte 2: 0x06
-            bm1398_write_register(ctx, chain, true, 0, ASIC_REG_BAUD_CONFIG, reg_val);
-        } else {
-            // Fallback to known good value if read fails
-            bm1398_write_register(ctx, chain, true, 0, ASIC_REG_BAUD_CONFIG, 0x06008F0F);
-        }
+        // CRITICAL FIX: Don't use read-modify-write, use known-good value
+        bm1398_write_register(ctx, chain, true, 0, ASIC_REG_BAUD_CONFIG, 0x06008F0F);
         usleep(10000);
 
         // Step 3: Configure CLK_CTRL register (0x18) with divisor + high-speed bit
         printf("    Writing CLK_CTRL (reg 0x18) with divisor and high-speed bit...\n");
-        if (bm1398_read_register(ctx, chain, false, 0, ASIC_REG_CLK_CTRL, &reg_val, 100) < 0) {
-            fprintf(stderr, "Error: Failed to read CLK_CTRL\n");
-            return -1;
-        }
 
-        // Modify register 0x18 for high-speed mode:
-        // Byte 3 (bits 31-24): Keep upper 4 bits, set lower 4 bits to (divisor >> 5) & 0xF
-        // Byte 1 (bits 15-8): Keep upper 3 bits, set lower 5 bits to divisor & 0x1F
-        // Byte 2 (bits 23-16): SET bit 0 for high-speed mode
-        reg_val = (reg_val & 0xF000E000) |              // Keep bits 31-28, 15-13
+        // CRITICAL FIX: Build CLK_CTRL value from scratch, don't read
+        // Base value: 0xF0000000 (from reset sequence)
+        // Add divisor and high-speed bit
+        reg_val = 0xF0000000 |                          // Base value from reset
                   (((baud_div >> 5) & 0xF) << 24) |     // Bits 27-24: upper divisor
                   ((baud_div & 0x1F) << 8) |            // Bits 12-8: lower divisor
                   0x00010000;                           // Bit 16: high-speed enable
@@ -942,19 +959,14 @@ int bm1398_set_baud_rate(bm1398_context_t *ctx, int chain, uint32_t baud_rate) {
 
         // Configure CLK_CTRL register (0x18) with divisor, clear high-speed bit
         printf("    Writing CLK_CTRL (reg 0x18) with divisor, low-speed mode...\n");
-        if (bm1398_read_register(ctx, chain, false, 0, ASIC_REG_CLK_CTRL, &reg_val, 100) < 0) {
-            fprintf(stderr, "Error: Failed to read CLK_CTRL\n");
-            return -1;
-        }
 
-        // Modify register 0x18 for low-speed mode:
-        // Byte 3 (bits 31-24): Keep upper 4 bits, set lower 4 bits to (divisor >> 5) & 0xF
-        // Byte 1 (bits 15-8): Keep upper 3 bits, set lower 5 bits to divisor & 0x1F
-        // Byte 2 (bits 23-16): CLEAR bit 0 for low-speed mode
-        reg_val = (reg_val & 0xF000E000) |              // Keep bits 31-28, 15-13
+        // CRITICAL FIX: Build CLK_CTRL value from scratch, don't read
+        // Base value: 0xF0000400 (from reset sequence with soft reset enabled)
+        // Add divisor, ensure high-speed bit is clear
+        reg_val = 0xF0000400 |                          // Base value from reset
                   (((baud_div >> 5) & 0xF) << 24) |     // Bits 27-24: upper divisor
                   ((baud_div & 0x1F) << 8);             // Bits 12-8: lower divisor
-        reg_val &= ~0x00010000;                         // Bit 16: clear high-speed bit
+        // High-speed bit already clear in base value
 
         if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, reg_val) < 0) {
             fprintf(stderr, "Error: Failed to write CLK_CTRL (low-speed)\n");
@@ -1114,14 +1126,29 @@ int bm1398_get_crc_error_count(bm1398_context_t *ctx) {
 /**
  * Enable work send (FPGA control register)
  * Source: Bitmain enable_work_send()
+ *
+ * CRITICAL: Factory test (sub_2213c @ 0x2213c) clears bit 14 of register 35
+ * to disable auto-pattern generation BEFORE accepting external work!
  */
 int bm1398_enable_work_send(bm1398_context_t *ctx) {
     if (!ctx || !ctx->initialized) {
         return -1;
     }
 
-    // Register 0x2D (0xB4/4) = work send enable
-    ctx->fpga_regs[0x2D] = 0xFFFFFFFF;
+    // CRITICAL: Disable auto-pattern generation (clear bit 14 of register 35)
+    // Factory test sub_2213c: fpga_read(0x23); fpga_write(0x23, val & 0xffffbfff)
+    // This MUST be done or FPGA won't accept external work!
+    uint32_t reg35 = fpga_read_indirect(ctx, FPGA_REG_WORK_CTRL_ENABLE);
+    printf("  Disabling auto-gen pattern (reg 35 bit 14)...\n");
+    printf("    Register 35 before: 0x%08X\n", reg35);
+    fpga_write_indirect(ctx, FPGA_REG_WORK_CTRL_ENABLE, reg35 & 0xFFFFBFFF);
+    printf("    Register 35 after:  0x%08X (bit 14 cleared)\n",
+           fpga_read_indirect(ctx, FPGA_REG_WORK_CTRL_ENABLE));
+
+    // Register 0x2D (0xB4/4) = work send enable (if needed)
+    // Note: This may not be required based on binary analysis
+    // ctx->fpga_regs[0x2D] = 0xFFFFFFFF;
+
     return 0;
 }
 
