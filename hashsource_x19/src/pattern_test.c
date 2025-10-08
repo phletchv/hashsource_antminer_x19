@@ -22,16 +22,22 @@
 #define TEST_ASIC_ID 0       // Test first ASIC only
 #define TEST_PATTERNS 80     // Test all patterns for first core
 #define NONCE_TIMEOUT_SEC 60 // Longer timeout for first test
-#define PATTERN_OFFSET 0x34  // Offset to pattern data within each 112-byte row
+// Each core occupies 7,238 bytes (0x1C46) in the pattern file
+// This includes a large header section plus 8 pattern slots
+#define PATTERN_ENTRY_SIZE 0x74    // 116 bytes per pattern entry
+#define PATTERNS_PER_CORE_ROW 8    // 8 pattern slots per core
 
-// Pattern file structure (52 bytes = 0x34)
-// Based on analysis of btc-asic-000.bin
+// Pattern file structure (116 bytes = 0x74)
+// CRITICAL: Verified from Binary Ninja decompilation of single_board_test @ 0x1C890
+// Function parse_bin_file_to_pattern_ex reads EXACTLY 0x74 bytes per pattern
 typedef struct __attribute__((packed)) {
-    uint8_t  midstate[32];   // SHA256 midstate
-    uint8_t  reserved1[4];   // Padding (0x00000000)
-    uint32_t nonce;          // Expected nonce (little-endian)
-    uint8_t  work_data[12];  // Last 12 bytes of block header
-} test_pattern_t;
+    uint8_t  header[15];     // Offset 0x00-0x0E: Header/metadata
+    uint8_t  work_data[12];  // Offset 0x0F-0x1A: Last 12 bytes of block header
+    uint8_t  midstate[32];   // Offset 0x1B-0x3A: SHA256 midstate
+    uint8_t  reserved[29];   // Offset 0x3B-0x57: Padding/reserved
+    uint32_t nonce;          // Offset 0x58-0x5B: Expected nonce (little-endian)
+    uint8_t  trailer[24];    // Offset 0x5C-0x73: Additional data
+} test_pattern_t;  // Total: 116 bytes (0x74)
 
 // Work entry with pattern and tracking
 typedef struct {
@@ -57,20 +63,24 @@ int load_asic_patterns(const char *pattern_dir, int asic_id,
         return -1;
     }
 
+    // Pattern file structure (verified from btc-asic-000.bin hex analysis):
+    // Total file: 579,072 bytes for 80 cores
+    // Each core row: 7,238 bytes (0x1C46)
+    //   - Large header section (varies, ~6,342 bytes)
+    //   - 8 pattern entries × 116 bytes (0x74) each = 928 bytes
+    //
+    // We read patterns sequentially, skipping unused slots
+
     int loaded = 0;
     for (int core = 0; core < CORES_PER_ASIC && loaded < max_works; core++) {
-        // Skip to pattern data offset for this core's row
-        if (fseek(fp, PATTERN_OFFSET, SEEK_CUR) != 0) {
-            fprintf(stderr, "Error: Seek failed at core %d\n", core);
-            fclose(fp);
-            return -1;
-        }
-
-        for (int pat = 0; pat < PATTERNS_PER_CORE && loaded < max_works; pat++) {
-            size_t read_bytes = fread(&works[loaded].pattern, 1, 0x34, fp);
-            if (read_bytes != 0x34) {
-                fprintf(stderr, "Error: Short read at core %d pattern %d\n",
-                       core, pat);
+        // Each core row is 7,238 bytes, but we only read the pattern entries
+        // The factory test skips through the file reading 0x74 bytes at a time
+        for (int pat = 0; pat < PATTERNS_PER_CORE_ROW && loaded < max_works; pat++) {
+            // Read exactly 116 bytes (0x74) as factory test does
+            size_t read_bytes = fread(&works[loaded].pattern, 1, PATTERN_ENTRY_SIZE, fp);
+            if (read_bytes != PATTERN_ENTRY_SIZE) {
+                fprintf(stderr, "Error: Short read at core %d pattern %d (got %zu, expected %d)\n",
+                       core, pat, read_bytes, PATTERN_ENTRY_SIZE);
                 fclose(fp);
                 return -1;
             }
@@ -78,11 +88,20 @@ int load_asic_patterns(const char *pattern_dir, int asic_id,
             works[loaded].work_id = pat;
             works[loaded].nonce_returned = 0;
             loaded++;
+
+            // Stop if we've loaded enough patterns
+            if (loaded >= max_works) break;
         }
 
-        // Each core has 8 pattern slots, skip remaining if we read fewer
-        if (PATTERNS_PER_CORE < 8) {
-            fseek(fp, (8 - PATTERNS_PER_CORE) * 0x34, SEEK_CUR);
+        // Skip remaining pattern slots in this core row if we didn't read all 8
+        // Factory test reads all 8 slots even if only using fewer patterns
+        int remaining = PATTERNS_PER_CORE_ROW - PATTERNS_PER_CORE;
+        if (remaining > 0 && loaded < max_works) {
+            if (fseek(fp, remaining * PATTERN_ENTRY_SIZE, SEEK_CUR) != 0) {
+                fprintf(stderr, "Error: Seek failed after core %d\n", core);
+                fclose(fp);
+                return -1;
+            }
         }
     }
 
@@ -197,13 +216,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Initialize chain
-    printf("Initializing chain %d...\n\n", chain);
-    if (bm1398_init_chain(&ctx, chain) < 0) {
-        fprintf(stderr, "Warning: Chain initialization failed\n");
-    }
-
-    // Power on PSU
+    // Power on PSU BEFORE chain initialization (matches bmminer sequence)
     printf("====================================\n");
     printf("Powering On PSU\n");
     printf("====================================\n");
@@ -216,7 +229,7 @@ int main(int argc, char *argv[]) {
     }
     printf("PSU powered on\n\n");
 
-    // Enable hashboard DC-DC converter (may already be enabled)
+    // Enable hashboard DC-DC converter BEFORE chain initialization
     printf("====================================\n");
     printf("Enabling Hashboard DC-DC Converter\n");
     printf("====================================\n");
@@ -225,6 +238,32 @@ int main(int argc, char *argv[]) {
         printf("Continuing with test...\n");
     }
     sleep(1);  // Allow power to stabilize
+    printf("\n");
+
+    // Initialize chain AFTER power is stable
+    printf("Initializing chain %d...\n\n", chain);
+    if (bm1398_init_chain(&ctx, chain) < 0) {
+        fprintf(stderr, "Warning: Chain initialization failed\n");
+    }
+
+    // Reduce voltage to operational level (CRITICAL: must match bmminer!)
+    // bmminer log line 122: "set_voltage_by_steps to 1260" (12.6V)
+    // This is done AFTER initialization, BEFORE mining starts
+    printf("====================================\n");
+    printf("Reducing Voltage to Operational Level\n");
+    printf("====================================\n");
+    printf("Reducing from 15.0V to 12.6V (matching bmminer)...\n");
+    if (bm1398_psu_set_voltage(&ctx, 12600) < 0) {
+        fprintf(stderr, "Warning: Failed to reduce voltage to 12.6V\n");
+        fprintf(stderr, "Continuing with test at 15.0V...\n");
+    } else {
+        printf("Voltage reduced to 12.6V\n");
+    }
+
+    // CRITICAL: Extended stabilization delay after voltage change
+    // ASICs need time to adjust to new voltage before accepting work
+    printf("Waiting 5 seconds for voltage stabilization...\n");
+    sleep(5);
     printf("\n");
 
     // Enable FPGA work distribution

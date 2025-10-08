@@ -7,6 +7,14 @@
     "sequential-thinking": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+    "binary_ninja_mcp": {
+      "command": "/home/danielsokil/Lab/fosdickio/binary_ninja_mcp/.venv/bin/python3",
+      "args": [
+        "/home/danielsokil/Lab/fosdickio/binary_ninja_mcp/bridge/binja_mcp_bridge.py"
+      ],
+      "timeout": 1800,
+      "disabled": false
     }
   }
 }

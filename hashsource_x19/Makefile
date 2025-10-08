@@ -24,14 +24,12 @@ BIN_DIR = bin
 TARGET = $(BIN_DIR)/hashsource_miner
 FAN_TEST = $(BIN_DIR)/fan_test
 FPGA_LOGGER = $(BIN_DIR)/fpga_logger
-FPGA_DUMP = $(BIN_DIR)/fpga_dump
 PSU_TEST = $(BIN_DIR)/psu_test
 ID2MAC = $(BIN_DIR)/id2mac
 EEPROM_DETECT = $(BIN_DIR)/eeprom_detect
 CHAIN_TEST = $(BIN_DIR)/chain_test
 WORK_TEST = $(BIN_DIR)/work_test
 PATTERN_TEST = $(BIN_DIR)/pattern_test
-FPGA_REG_TEST = $(BIN_DIR)/fpga_reg_test
 
 # Source files for main miner
 SRCS = $(SRC_DIR)/main.c
@@ -41,9 +39,6 @@ FAN_SRCS = $(SRC_DIR)/fan_test.c
 
 # Source files for FPGA logger
 LOGGER_SRCS = $(SRC_DIR)/fpga_logger.c
-
-# Source files for FPGA dump
-DUMP_SRCS = $(SRC_DIR)/fpga_dump.c
 
 # Source files for PSU test
 PSU_SRCS = $(SRC_DIR)/psu_test.c
@@ -63,21 +58,16 @@ WORK_TEST_SRCS = $(SRC_DIR)/work_test.c $(SRC_DIR)/bm1398_asic.c
 # Source files for pattern_test (includes BM1398 driver)
 PATTERN_TEST_SRCS = $(SRC_DIR)/pattern_test.c $(SRC_DIR)/bm1398_asic.c
 
-# Source files for fpga_reg_test
-FPGA_REG_TEST_SRCS = $(SRC_DIR)/fpga_reg_test.c
-
 # Object files
 OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(SRCS)))
 FAN_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(FAN_SRCS)))
 LOGGER_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(LOGGER_SRCS)))
-DUMP_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(DUMP_SRCS)))
 PSU_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(PSU_SRCS)))
 ID2MAC_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(ID2MAC_SRCS)))
 EEPROM_DETECT_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(EEPROM_DETECT_SRCS)))
 CHAIN_TEST_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(CHAIN_TEST_SRCS)))
 WORK_TEST_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(WORK_TEST_SRCS)))
 PATTERN_TEST_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(PATTERN_TEST_SRCS)))
-FPGA_REG_TEST_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(FPGA_REG_TEST_SRCS)))
 
 # Compiler flags
 CFLAGS = -Wall -Wextra -O2 -g
@@ -89,7 +79,7 @@ CFLAGS += -D_GNU_SOURCE
 LDFLAGS = -pthread -lm -lrt
 
 # Default target
-all: dirs $(TARGET) $(FAN_TEST) $(FPGA_LOGGER) $(FPGA_DUMP) $(PSU_TEST) $(ID2MAC) $(EEPROM_DETECT) $(CHAIN_TEST) $(WORK_TEST) $(PATTERN_TEST) $(FPGA_REG_TEST)
+all: dirs $(TARGET) $(FAN_TEST) $(FPGA_LOGGER) $(PSU_TEST) $(ID2MAC) $(EEPROM_DETECT) $(CHAIN_TEST) $(WORK_TEST) $(PATTERN_TEST)
 
 # Create directories
 dirs:
@@ -115,14 +105,6 @@ $(FAN_TEST): $(FAN_OBJS)
 $(FPGA_LOGGER): $(LOGGER_OBJS)
 	@echo "Linking $@ (static)"
 	$(CC) $(LOGGER_OBJS) -o $@ $(LDFLAGS) -static
-	@echo "Stripping $@"
-	$(STRIP) $@
-	@echo "Build complete: $@"
-
-# Build FPGA dump
-$(FPGA_DUMP): $(DUMP_OBJS)
-	@echo "Linking $@"
-	$(CC) $(DUMP_OBJS) -o $@ $(LDFLAGS)
 	@echo "Stripping $@"
 	$(STRIP) $@
 	@echo "Build complete: $@"
@@ -171,14 +153,6 @@ $(WORK_TEST): $(WORK_TEST_OBJS)
 $(PATTERN_TEST): $(PATTERN_TEST_OBJS)
 	@echo "Linking $@"
 	$(CC) $(PATTERN_TEST_OBJS) -o $@ $(LDFLAGS)
-	@echo "Stripping $@"
-	$(STRIP) $@
-	@echo "Build complete: $@"
-
-# Build fpga_reg_test
-$(FPGA_REG_TEST): $(FPGA_REG_TEST_OBJS)
-	@echo "Linking $@"
-	$(CC) $(FPGA_REG_TEST_OBJS) -o $@ $(LDFLAGS)
 	@echo "Stripping $@"
 	$(STRIP) $@
 	@echo "Build complete: $@"

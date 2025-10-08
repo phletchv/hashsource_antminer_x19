@@ -19,25 +19,39 @@
 #define FPGA_REG_BASE               0x40000000
 #define FPGA_REG_SIZE               5120
 
-// FPGA register offsets (word-aligned)
+// FPGA Indirect Register Mapping
+// CRITICAL: Both bmminer and factory test use indirect register access!
+// Source: Binary analysis of single_board_test @ 0x48894 and bmminer @ 0x7ee48
+// These are LOGICAL INDICES that map to physical word offsets via lookup table
+
+// Logical register indices (use with fpga_read_indirect/fpga_write_indirect)
+#define FPGA_REG_CONTROL            0   // Maps to word 0 (0x000)
+#define FPGA_REG_TW_WRITE_CMD_FIRST 16  // Maps to word 16 (0x040) - first word of work
+#define FPGA_REG_TW_WRITE_CMD_REST  17  // Maps to word 16 (0x040) - rest of work (SAME!)
+#define FPGA_REG_SPECIAL_18         18  // Maps to word 33 (0x084) - CRITICAL init register
+#define FPGA_REG_TIMEOUT            20  // Maps to word 35 (0x08C) ⚠️ NOT 0x014!
+#define FPGA_REG_WORK_CTRL_ENABLE   35  // Maps to word 70 (0x118) - Work control/auto-gen
+#define FPGA_REG_CHAIN_WORK_CONFIG  36  // Maps to word 71 (0x11C)
+#define FPGA_REG_WORK_QUEUE_PARAM   42  // Maps to word 80 (0x140)
+
+// Direct FPGA register offsets (for non-mapped registers, word-aligned)
+// These registers use DIRECT access, not the indirect mapping table
 #define REG_HARDWARE_VERSION        (0x000 / 4)
 #define REG_FAN_SPEED               (0x004 / 4)
 #define REG_HASH_ON_PLUG            (0x008 / 4)
 #define REG_BUFFER_SPACE            (0x00C / 4)
 #define REG_RETURN_NONCE            (0x010 / 4)
-#define REG_NONCE_TIMEOUT           (0x014 / 4)  // Nonce return timeout
 #define REG_NONCE_NUMBER_IN_FIFO    (0x018 / 4)
 #define REG_NONCE_FIFO_INTERRUPT    (0x01C / 4)
 #define REG_IIC_COMMAND             (0x030 / 4)
 #define REG_RESET_HASHBOARD_COMMAND (0x034 / 4)
-#define REG_TW_WRITE_COMMAND        (0x040 / 4)
-#define REG_QN_WRITE_DATA_COMMAND   (0x080 / 4)
-#define REG_FAN_CONTROL             (0x084 / 4)
-#define REG_TIME_OUT_CONTROL        (0x088 / 4)
 #define REG_BC_WRITE_COMMAND        (0x0C0 / 4)
 #define REG_BC_COMMAND_BUFFER       (0x0C4 / 4)
 #define REG_FPGA_CHIP_ID_ADDR       (0x0F0 / 4)
 #define REG_CRC_ERROR_CNT_ADDR      (0x0F8 / 4)
+
+// FPGA register mapping table size
+#define FPGA_REGISTER_MAP_SIZE      110
 
 // BC_WRITE_COMMAND register bits
 #define BC_COMMAND_BUFFER_READY     (1U << 31)
@@ -159,6 +173,10 @@ typedef struct __attribute__((packed)) {
 int bm1398_init(bm1398_context_t *ctx);
 void bm1398_cleanup(bm1398_context_t *ctx);
 
+// FPGA indirect register access (CRITICAL - matches bmminer/factory test)
+uint32_t fpga_read_indirect(bm1398_context_t *ctx, int logical_index);
+void fpga_write_indirect(bm1398_context_t *ctx, int logical_index, uint32_t value);
+
 // Low-level UART commands
 uint8_t bm1398_crc5(const uint8_t *data, unsigned int bits);
 int bm1398_send_uart_cmd(bm1398_context_t *ctx, int chain,
@@ -209,6 +227,7 @@ int bm1398_get_crc_error_count(bm1398_context_t *ctx);
 
 // PSU and hashboard power control
 int bm1398_psu_power_on(bm1398_context_t *ctx, uint32_t voltage_mv);
+int bm1398_psu_set_voltage(bm1398_context_t *ctx, uint32_t voltage_mv);
 int bm1398_enable_dc_dc(bm1398_context_t *ctx, int chain);
 
 #endif // BM1398_ASIC_H
