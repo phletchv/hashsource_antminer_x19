@@ -227,6 +227,20 @@ int main(int argc, char *argv[]) {
     sleep(1);  // Allow power to stabilize
     printf("\n");
 
+    // Reduce voltage to operational level (like stock firmware does)
+    printf("====================================\n");
+    printf("Reducing Voltage to Operational Level\n");
+    printf("====================================\n");
+    printf("Reducing from 15.0V to 12.8V...\n");
+    if (bm1398_psu_set_voltage(&ctx, 12800) < 0) {
+        fprintf(stderr, "Warning: Failed to reduce voltage to 12.8V\n");
+        fprintf(stderr, "Continuing with test at 15.0V...\n");
+    } else {
+        printf("Voltage reduced to 12.8V\n");
+    }
+    sleep(2);  // Allow voltage to stabilize
+    printf("\n");
+
     // Enable FPGA work distribution
     printf("Enabling FPGA work distribution...\n");
     bm1398_enable_work_send(&ctx);

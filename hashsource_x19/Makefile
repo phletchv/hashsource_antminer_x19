@@ -32,6 +32,7 @@ CHAIN_TEST = $(BIN_DIR)/chain_test
 WORK_TEST = $(BIN_DIR)/work_test
 PATTERN_TEST = $(BIN_DIR)/pattern_test
 FPGA_REG_TEST = $(BIN_DIR)/fpga_reg_test
+ASIC_STATUS = $(BIN_DIR)/asic_status_check
 
 # Source files for main miner
 SRCS = $(SRC_DIR)/main.c
@@ -66,6 +67,9 @@ PATTERN_TEST_SRCS = $(SRC_DIR)/pattern_test.c $(SRC_DIR)/bm1398_asic.c
 # Source files for fpga_reg_test
 FPGA_REG_TEST_SRCS = $(SRC_DIR)/fpga_reg_test.c
 
+# Source files for asic_status_check (includes BM1398 driver)
+ASIC_STATUS_SRCS = $(SRC_DIR)/asic_status_check.c $(SRC_DIR)/bm1398_asic.c
+
 # Object files
 OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(SRCS)))
 FAN_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(FAN_SRCS)))
@@ -78,6 +82,7 @@ CHAIN_TEST_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(CHAIN_TEST_SRCS)))
 WORK_TEST_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(WORK_TEST_SRCS)))
 PATTERN_TEST_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(PATTERN_TEST_SRCS)))
 FPGA_REG_TEST_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(FPGA_REG_TEST_SRCS)))
+ASIC_STATUS_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(ASIC_STATUS_SRCS)))
 
 # Compiler flags
 CFLAGS = -Wall -Wextra -O2 -g
@@ -89,7 +94,7 @@ CFLAGS += -D_GNU_SOURCE
 LDFLAGS = -pthread -lm -lrt
 
 # Default target
-all: dirs $(TARGET) $(FAN_TEST) $(FPGA_LOGGER) $(FPGA_DUMP) $(PSU_TEST) $(ID2MAC) $(EEPROM_DETECT) $(CHAIN_TEST) $(WORK_TEST) $(PATTERN_TEST) $(FPGA_REG_TEST)
+all: dirs $(TARGET) $(FAN_TEST) $(FPGA_LOGGER) $(FPGA_DUMP) $(PSU_TEST) $(ID2MAC) $(EEPROM_DETECT) $(CHAIN_TEST) $(WORK_TEST) $(PATTERN_TEST) $(FPGA_REG_TEST) $(ASIC_STATUS)
 
 # Create directories
 dirs:
@@ -119,10 +124,10 @@ $(FPGA_LOGGER): $(LOGGER_OBJS)
 	$(STRIP) $@
 	@echo "Build complete: $@"
 
-# Build FPGA dump
+# Build FPGA dump (static for portability)
 $(FPGA_DUMP): $(DUMP_OBJS)
-	@echo "Linking $@"
-	$(CC) $(DUMP_OBJS) -o $@ $(LDFLAGS)
+	@echo "Linking $@ (static)"
+	$(CC) $(DUMP_OBJS) -o $@ $(LDFLAGS) -static
 	@echo "Stripping $@"
 	$(STRIP) $@
 	@echo "Build complete: $@"
@@ -179,6 +184,14 @@ $(PATTERN_TEST): $(PATTERN_TEST_OBJS)
 $(FPGA_REG_TEST): $(FPGA_REG_TEST_OBJS)
 	@echo "Linking $@"
 	$(CC) $(FPGA_REG_TEST_OBJS) -o $@ $(LDFLAGS)
+	@echo "Stripping $@"
+	$(STRIP) $@
+	@echo "Build complete: $@"
+
+# Build asic_status_check
+$(ASIC_STATUS): $(ASIC_STATUS_OBJS)
+	@echo "Linking $@"
+	$(CC) $(ASIC_STATUS_OBJS) -o $@ $(LDFLAGS)
 	@echo "Stripping $@"
 	$(STRIP) $@
 	@echo "Build complete: $@"

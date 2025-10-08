@@ -86,6 +86,51 @@ int bm1398_init(bm1398_context_t *ctx) {
     ctx->initialized = true;
     ctx->num_chains = 0;
 
+    // Initialize FPGA registers with values from working bmminer
+    // Source: FPGA dump from actively hashing S19 Pro (bmminer initialization)
+    printf("Initializing FPGA registers...\n");
+
+    printf("  Before: 0x088 = 0x%08X\n", ctx->fpga_regs[0x088 / 4]);
+
+    // Control registers (0x000-0x01C)
+    ctx->fpga_regs[0x000 / 4] = 0x4000B031;  // FPGA version/control
+    ctx->fpga_regs[0x004 / 4] = 0x00000500;  // Status register
+    ctx->fpga_regs[0x008 / 4] = 0x00000007;  // Control
+    ctx->fpga_regs[0x010 / 4] = 0x00000004;  // Control
+    ctx->fpga_regs[0x014 / 4] = 0x5555AAAA;  // Test pattern
+    ctx->fpga_regs[0x01C / 4] = 0x00000001;  // Control
+
+    // Chain configuration (0x030-0x03C)
+    ctx->fpga_regs[0x030 / 4] = 0x8242001F;  // Chain config
+    ctx->fpga_regs[0x034 / 4] = 0x0000FFF8;  // Chain config
+    ctx->fpga_regs[0x03C / 4] = 0x001A1A1A;  // Chain config
+
+    // Work queue and command control (0x080-0x0A0)
+    ctx->fpga_regs[0x080 / 4] = 0x0080800F;  // QN_WRITE_COMMAND
+    ctx->fpga_regs[0x084 / 4] = 0x00640000;  // Work queue parameter
+    ctx->fpga_regs[0x088 / 4] = 0x8001FFFF;  // TIME_OUT_CONTROL (longer timeout!)
+    ctx->fpga_regs[0x08C / 4] = 0x0000000F;  // BAUD_CLOCK_SEL
+    ctx->fpga_regs[0x09C / 4] = 0xFFFFFFFF;  // Work queue mask (all enabled)
+    ctx->fpga_regs[0x0A0 / 4] = 0x00640000;  // Work queue parameter
+
+    // Command buffer (0x0C0-0x0C8)
+    ctx->fpga_regs[0x0C0 / 4] = 0x00820000;  // BC command control
+    ctx->fpga_regs[0x0C4 / 4] = 0x52050000;  // BC command data
+    ctx->fpga_regs[0x0C8 / 4] = 0x0A000000;  // BC command data
+
+    // PIC/I2C configuration (0x0F0-0x0F8)
+    ctx->fpga_regs[0x0F0 / 4] = 0x57104814;  // PIC/I2C config
+    ctx->fpga_regs[0x0F4 / 4] = 0x80404404;  // PIC/I2C config
+    ctx->fpga_regs[0x0F8 / 4] = 0x0000309D;  // PIC/I2C config
+
+    __sync_synchronize();
+    usleep(50000);  // 50ms settle time
+
+    printf("  After:  0x080 = 0x%08X (expect 0x0080800F)\n", ctx->fpga_regs[0x080 / 4]);
+    printf("  After:  0x088 = 0x%08X (expect 0x8001FFFF)\n", ctx->fpga_regs[0x088 / 4]);
+    printf("  After:  0x08C = 0x%08X (expect 0x0000000F)\n", ctx->fpga_regs[0x08C / 4]);
+    printf("FPGA registers initialized\n");
+
     // Detect chains
     uint32_t detected = bm1398_detect_chains(ctx);
     printf("Detected chains: 0x%08X\n", detected);
@@ -570,29 +615,8 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     printf("  Core reset sequence complete\n");
     usleep(500000);  // 500ms additional settle time
 
-    // 7b. Set FPGA nonce timeout based on frequency
-    // Formula from factory test: timeout = 0x1FFFF / freq_mhz
-    // For 525 MHz: timeout = 0x1FFFF / 525 ≈ 251
-    // CRITICAL: Factory test writes timeout to register 20 which maps to offset 0x08C, NOT 0x014!
-    // Register 0x014 is not in the factory test mapping table and appears read-only
-    // Register 0x08C appears to be dual-purpose (baud/clock + timeout)
-    // Strategy: Read existing value, preserve upper bits, set timeout in lower 17 bits + enable bit
-    uint32_t timeout_val = 0x1FFFF / FREQUENCY_525MHZ;
-    if (timeout_val > 0x1FFFF) timeout_val = 0x1FFFF;  // Clamp to max
-
-    // Read current register value to preserve other configuration
-    uint32_t current_val = ctx->fpga_regs[0x08C / 4];
-    printf("  Current reg[0x08C] = 0x%08X\n", current_val);
-
-    // Merge: keep bits 17-30, set timeout in bits 0-16, set enable bit 31
-    uint32_t timeout_reg = (current_val & 0x7FFE0000) | (timeout_val & 0x1FFFF) | 0x80000000;
-    printf("  Setting FPGA nonce timeout = 0x%08X (timeout=%u)...\n", timeout_reg, timeout_val);
-    printf("  Writing merged value to offset 0x08C...\n");
-    ctx->fpga_regs[0x08C / 4] = timeout_reg;
-    __sync_synchronize();
-    usleep(10000);
-    printf("  Verifying write: reg[0x08C] = 0x%08X\n", ctx->fpga_regs[0x08C / 4]);
-    usleep(10000);
+    // FPGA registers (0x080, 0x088, 0x08C) are now set globally during bm1398_init()
+    // No need to set them again here
 
     // 8. Set final ticket mask
     printf("  Setting final ticket mask = 0xFF...\n");
@@ -1381,6 +1405,27 @@ int bm1398_psu_power_on(bm1398_context_t *ctx, uint32_t voltage_mv) {
 
     // Wait 2 seconds for power to settle (from psu_test.c)
     sleep(2);
+
+    return 0;
+}
+
+// Set PSU voltage without full power-on sequence (for voltage adjustment after init)
+int bm1398_psu_set_voltage(bm1398_context_t *ctx, uint32_t voltage_mv) {
+    if (!ctx || !ctx->initialized) {
+        return -1;
+    }
+
+    // PSU must already be detected and powered on
+    if (g_psu_version == 0) {
+        fprintf(stderr, "Error: PSU not initialized, call bm1398_psu_power_on first\n");
+        return -1;
+    }
+
+    // Set voltage via I2C
+    if (psu_set_voltage(ctx->fpga_regs, voltage_mv) < 0) {
+        fprintf(stderr, "Error: Failed to set PSU voltage to %umV\n", voltage_mv);
+        return -1;
+    }
 
     return 0;
 }

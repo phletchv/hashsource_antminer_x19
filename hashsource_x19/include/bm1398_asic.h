@@ -209,6 +209,7 @@ int bm1398_get_crc_error_count(bm1398_context_t *ctx);
 
 // PSU and hashboard power control
 int bm1398_psu_power_on(bm1398_context_t *ctx, uint32_t voltage_mv);
+int bm1398_psu_set_voltage(bm1398_context_t *ctx, uint32_t voltage_mv);
 int bm1398_enable_dc_dc(bm1398_context_t *ctx, int chain);
 
 #endif // BM1398_ASIC_H
