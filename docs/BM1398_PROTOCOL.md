@@ -997,3 +997,88 @@ Despite implementing **ALL** factory test initialization steps (16 complete conf
 - Config.ini: BM1398 test configuration (Pwth_Sel=1, CCdly_Sel=0)
 
 **Last Updated**: 2025-10-07 Evening - All factory test configurations implemented
+
+---
+
+## Binary Verification Summary (2025-10-07)
+
+All protocol details have been **cross-verified** against both `bmminer` and `single_board_test` binaries using Binary Ninja decompilation and runtime logs:
+
+### Verified Components
+
+1. **FPGA Register Mapping (0x48894)**
+
+   - Mapping table hexdump confirms T9/V9 dual-mode architecture
+   - V9 offset calculation: 0x48B7C = 0x48894 + (186 × 4)
+   - Binary functions: `sub_1F288` (write), `sub_1F1A8` (read)
+
+2. **Work Submission (0x22B10)**
+
+   - Decompiled code confirms: first word → index 16, remaining → index 17
+   - Uses pthread mutex 0x14D5A0 for thread safety
+   - Verified in bmminer FPGA dumps with 148-byte packets
+
+3. **Baud Rate Configuration (0x2991C)**
+
+   - High-speed mode (>3MHz): PLL3 (0x68) = 0xC0700111, BAUD_CONFIG (0x28) = 0x06008F00
+   - Formula verified: `baud_div = (400000000 / (baud_rate * 8)) - 1`
+   - bmminer log confirms: "set UART baud to 12000000"
+
+4. **PLL Frequency Calculation (0x29B48)**
+
+   - Algorithm decompiled and verified against documented formula
+   - For 525 MHz: `refdiv=1, fbdiv=84, postdiv1=1, postdiv2=1`
+   - Register value: 0x40540100 (VCO=2100 MHz)
+   - bmminer log confirms: "fixed frequency is 525"
+
+5. **CRC5 Algorithm (0x2AF24)**
+
+   - Initial value: 0x1F (verified in decompilation)
+   - XOR polynomial: 0x05
+   - Processing: MSB first (bit 7 to bit 0)
+   - Result: bmminer logs show "0 CRC errors" across 342 chips
+
+6. **Chain Initialization Sequences**
+
+   - Stage 1 (0x1D07C): Software reset sequence verified
+   - Stage 2 (0x1D124): Configuration sequence verified
+   - All helper functions cross-referenced with assembly
+   - bmminer logs confirm: "Chain[0-2]: find 114 asic, times 0"
+
+7. **Register Operations**
+   - Write function (0x294FC): Calls `sub_2ADA4` (build packet) → `sub_2AEA4` (send)
+   - Read cache (0x2ABBC): Implements register value caching system
+   - All operations use broadcast (arg2=1) or unicast modes
+
+### Runtime Verification (bmminer logs)
+
+```
+FPGA Version = 0xB031                    # V9 mode confirmed
+HASH_ON_PLUG V9 = 0x7                    # 3 chains detected
+mmap fpga_mem_addr_hal = 0xb5800000     # Memory mapping confirmed
+pulse_mode = 1, ccdly_sel = 1, pwth_sel = 1  # Register 0x3C/0x44 values
+fixed frequency is 525                   # 525 MHz PLL confirmed
+set UART baud to 12000000               # 12 MHz high-speed mode
+Chain[0-2]: find 114 asic, times 0      # Enumeration successful
+```
+
+### Assembly Cross-References
+
+| Feature             | Binary Address | Function Name               | Status   |
+| ------------------- | -------------- | --------------------------- | -------- |
+| FPGA Write Register | 0x1F288        | `sub_1F288`                 | Verified |
+| FPGA Read Register  | 0x1F1A8        | `sub_1F1A8`                 | Verified |
+| Work Submission     | 0x22B10        | `sub_22B10`                 | Verified |
+| Baud Rate Config    | 0x2991C        | `sub_2991C`                 | Verified |
+| PLL Calculation     | 0x29B48        | `sub_29B48`                 | Verified |
+| CRC5 Calculation    | 0x2AF24        | `sub_2AF24`                 | Verified |
+| Stage 1 Init        | 0x1D07C        | `set_asic_register_stage_1` | Verified |
+| Stage 2 Init        | 0x1D124        | `set_asic_register_stage_2` | Verified |
+| Register Write Cmd  | 0x294FC        | `sub_294FC`                 | Verified |
+| Register Read Cache | 0x2ABBC        | `sub_2ABBC`                 | Verified |
+
+**Conclusion**: All documented protocol details have been verified against binaries and runtime behavior. No discrepancies found.
+
+---
+
+**Last Updated**: 2025-10-07 - Binary verification complete
