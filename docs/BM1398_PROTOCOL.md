@@ -24,42 +24,63 @@
 
 ## FPGA Register Map
 
-FPGA base address: `0x40000000`, size: 5120 bytes (0x1400)
+FPGA base address: Mapped to userspace (not 0x40000000 directly), size: 0x1200 bytes (4608 bytes)
 
-**⚠️ CRITICAL: Indirect Register Mapping (2025-10-07 Discovery)**
+- Device: `/dev/axi_fpga_dev`
+- Mapped via mmap() to variable `dword_14D104`
+- All register access goes through this mapped address
 
-Both `bmminer` and `single_board_test` use **indirect register access** via a 110-entry mapping table, NOT direct byte offsets!
+**⚠️ CRITICAL: Indirect Register Mapping (Verified 2025-10-07)**
 
-**Key indirect mappings:**
+Both `bmminer` and `single_board_test` use **indirect register access** via mapping table `dword_48894[372]`, NOT direct byte offsets!
 
-- Logical index 0 → word 0 (0x000) - Control register
-- Logical index 16 → word 16 (0x040) - Work FIFO first word
-- Logical index 17 → word 16 (0x040) - Work FIFO rest (SAME register!)
-- Logical index 20 → word 35 (0x08C) - **Timeout register** (NOT 0x014!)
-- Logical indices 35, 36, 42 → Work control/enable registers
+**Two mapping modes based on FPGA hardware version:**
+
+- **T9 mode** (dword_14D0F8 = 1): Uses indices 0-185 (older S9/T9 hardware)
+- **V9 mode** (dword_14D0F8 = 0): Uses indices 186-371 (S19 Pro)
+  - S19 Pro confirmed as V9 mode: `"HASH_ON_PLUG V9 = 0x7"` in bmminer logs
+
+**Register Access Functions:**
+
+- Read: `sub_1F21C(index, *value)` at 0x1F21C
+- Write: `sub_1F288(index, value)` at 0x1F288
+- Physical reg = `dword_48894[index + (dword_14D0F8 ? 0 : 186)]`
+
+**Key V9 Mode Mappings (S19 Pro):**
+
+- Logical index 4 → Physical register 4 (0x010) - RETURN_NONCE
+- Logical index 5 → Physical register 6 (0x018) - NONCE_NUMBER_IN_FIFO
+- Logical index 16 → Work FIFO first word (actual mapping TBD from V9 table)
+- Logical index 17 → Work FIFO subsequent words (actual mapping TBD from V9 table)
+
+**Work Submission Function:** `sub_22B10` at 0x22B10
+
+- Writes first 32-bit word to logical index 16
+- Writes all remaining words to logical index 17 (looped)
+- Uses pthread mutex for thread safety
 
 ### Key Registers (direct access - non-mapped)
 
-| Offset      | Name                    | Purpose                                   |
-| ----------- | ----------------------- | ----------------------------------------- |
-| 0x000       | HARDWARE_VERSION        | FPGA version (0xC501 for S9, TBD for S19) |
-| 0x004       | FAN_SPEED               | Fan tachometer reading                    |
-| 0x008       | HASH_ON_PLUG            | Chain detection (bit 0-2 for chains 0-2)  |
-| 0x00C       | BUFFER_SPACE            | FPGA work buffer space available          |
-| 0x010       | RETURN_NONCE            | Nonce FIFO read register                  |
-| 0x018       | NONCE_NUMBER_IN_FIFO    | Number of nonces available to read        |
-| 0x01C       | NONCE_FIFO_INTERRUPT    | Nonce FIFO interrupt control              |
-| 0x020-0x02C | TEMPERATURE_0_15        | Temperature sensor readings               |
-| 0x030       | IIC_COMMAND             | I2C controller (PSU, EEPROM)              |
-| 0x034       | RESET_HASHBOARD_COMMAND | Chain reset control                       |
-| 0x040       | TW_WRITE_COMMAND        | Work data write (S9 legacy)               |
-| 0x080       | QN_WRITE_DATA_COMMAND   | Quick nonce write?                        |
-| 0x084       | FAN_CONTROL             | PWM fan control                           |
-| 0x088       | TIME_OUT_CONTROL        | Timeout configuration                     |
-| 0x0C0       | BC_WRITE_COMMAND        | **Broadcast command trigger**             |
-| 0x0C4       | BC_COMMAND_BUFFER       | **Command data buffer (12 bytes)**        |
-| 0x0F0       | FPGA_CHIP_ID_ADDR       | FPGA chip ID                              |
-| 0x0F8       | CRC_ERROR_CNT_ADDR      | CRC error counter                         |
+| Offset      | Name                    | Purpose                                              |
+| ----------- | ----------------------- | ---------------------------------------------------- |
+| 0x000       | HARDWARE_VERSION        | FPGA version (0xC501 for S9, **0xB031 for S19 Pro**) |
+| 0x004       | FAN_SPEED               | Fan tachometer reading                               |
+| 0x008       | HASH_ON_PLUG            | Chain detection (bit 0-2 for chains 0-2)             |
+| 0x00C       | BUFFER_SPACE            | FPGA work buffer space available                     |
+| 0x010       | RETURN_NONCE            | Nonce FIFO read register                             |
+| 0x018       | NONCE_NUMBER_IN_FIFO    | Number of nonces available to read                   |
+| 0x01C       | NONCE_FIFO_INTERRUPT    | Nonce FIFO interrupt control                         |
+| 0x020-0x02C | TEMPERATURE_0_15        | Temperature sensor readings                          |
+| 0x030       | IIC_COMMAND             | I2C controller (PSU, EEPROM)                         |
+| 0x034       | RESET_HASHBOARD_COMMAND | Chain reset control                                  |
+| 0x040       | TW_WRITE_COMMAND        | Work data write (S9 legacy)                          |
+| 0x080       | QN_WRITE_DATA_COMMAND   | Quick nonce write?                                   |
+| 0x084       | FAN_CONTROL             | PWM fan control                                      |
+| 0x088       | TIME_OUT_CONTROL        | Timeout configuration                                |
+| 0x0C0       | BC_WRITE_COMMAND        | **Broadcast command trigger**                        |
+| 0x0C4       | BC_COMMAND_BUFFER       | **Command data buffer (12 bytes)**                   |
+| 0x0F0       | FPGA_CHIP_ID_ADDR       | FPGA chip ID                                         |
+| 0x0F8       | CRC_ERROR_CNT_ADDR      | CRC error counter                                    |
 
 ### BC_WRITE_COMMAND Register Bits (0x0C0)
 
@@ -272,13 +293,21 @@ void configure_chain_stage_2(int chain, uint8_t diode_vdd_mux_sel) {
 
 ## CRC5 Algorithm
 
+**Verified Implementation:** `sub_2AF24` at address 0x2AF24 in single_board_test
+
 ```c
 /**
- * Calculate CRC5 for BM13xx UART commands
+ * Calculate CRC5 for BM13xx UART commands (Verified from single_board_test)
+ * Function: sub_2AF24
  * Polynomial: Custom 5-bit CRC
  * Input: Command bytes (without CRC byte)
  * Input bits: Number of bits to process (usually 32 or 64)
  * Returns: 5-bit CRC value (0-31)
+ *
+ * Called by:
+ * - sub_2ADA4: Write register command (9 bytes, 64 bits)
+ * - sub_2AE00: Address assignment command (5 bytes, 32 bits)
+ * - sub_2AE30: Read register command (5 bytes, 32 bits)
  */
 uint8_t crc5(const uint8_t *data, unsigned int bits) {
     uint8_t crc = 0x1F;  // Initial value
@@ -356,11 +385,19 @@ void send_chain_inactive(int chain) {
 
 ### Baud Rate Configuration (12 MHz)
 
+**Verified Implementation:** `sub_2991C` at address 0x2991C in single_board_test
+
 ```c
 /**
- * Set UART baud rate
+ * Set UART baud rate (Verified from single_board_test)
+ * Function: sub_2991C
  * Standard mode: <= 3 MHz (base clock = 25 MHz)
  * High-speed mode: > 3 MHz (base clock = 400 MHz via PLL3)
+ *
+ * Registers written:
+ * - 0x68 (PLL3): 0xC0700111 (high-speed mode only)
+ * - 0x28 (BAUD_CONFIG): 0x06008F00 (high-speed mode only)
+ * - 0x18 (CLK_CTRL): baud divisor + bit 16
  */
 void set_baud_rate(int chain, uint32_t baud_rate) {
     uint32_t baud_div;
@@ -401,16 +438,32 @@ void set_baud_rate(int chain, uint32_t baud_rate) {
 
 ### Frequency Configuration (525 MHz)
 
-**IMPLEMENTED (2025-10-07)** - Complete PLL configuration formula:
+**Verified Implementation:**
+
+- PLL calculation: `sub_29B48` at 0x29B48
+- PLL write: `sub_29558` at 0x29558
+- Register write function: `sub_294FC` at 0x294FC
+
+**PLL Register Addresses (aDh array at 0x48E60):**
+
+- aDh[0] = 0x08 (PLL0)
+- aDh[1] = 0x60 (PLL1)
+- aDh[2] = 0x64 (PLL2)
+- aDh[3] = 0x68 (PLL3)
 
 ```c
 /**
- * Set ASIC core frequency
+ * Set ASIC core frequency (Verified from single_board_test)
+ * Functions: sub_29B48 (calc) + sub_29558 (write)
  * Target: 525 MHz for BM1398
  *
  * PLL Formula: freq = CLKI * fbdiv / (refdiv * (postdiv1+1) * (postdiv2+1))
  * Where: CLKI = 25 MHz (crystal oscillator)
- * VCO range: 1600-3200 MHz
+ * VCO range: 2000-3200 MHz (≤3125 MHz if refdiv=1)
+ *
+ * Register value formula (verified):
+ * pll_value = (postdiv2-1) & 7 | 0x40000000 | (16 * ((postdiv1-1) & 7)) |
+ *             ((refdiv & 0x3F) << 8) | ((fbdiv & 0xFFF) << 16)
  */
 void set_chain_frequency(int chain, uint32_t freq_mhz) {
     uint8_t refdiv, postdiv1, postdiv2;
@@ -478,7 +531,11 @@ void set_chain_frequency(int chain, uint32_t freq_mhz) {
 
 ### 4-Midstate Work Packet (148 bytes = 0x94)
 
-**VERIFIED from factory test binary analysis (sub_22B10):**
+**Verified Implementation:**
+
+- Work packet send function: `sub_22B10` at 0x22B10
+- 4-midstate pattern send: `software_pattern_4_midstate_send_function` at ~0x12760
+- Work submission via FPGA indirect registers 16/17
 
 ```c
 struct work_packet_4mid {
@@ -518,10 +575,32 @@ void send_work_4midstate(int chain, uint32_t work_id,
         words[i] = __builtin_bswap32(words[i]);
     }
 
-    // Send via FPGA indirect register mapping
-    // Logical index 16 for first word, index 17 for remaining words
-    // Both map to physical register 0x040 (FIFO writes)
+    // Send via FPGA indirect register mapping (Verified sub_22B10)
+    // First word → Logical index 16
+    // Remaining words → Logical index 17 (looped)
+    // Physical mapping depends on FPGA version (V9 mode for S19 Pro)
     send_work_via_indirect_mapping(chain, &work, sizeof(work));
+}
+
+/**
+ * Actual work send function (verified from sub_22B10)
+ */
+int send_work_via_indirect_mapping(int chain, void *work, unsigned int size) {
+    pthread_mutex_lock(&work_mutex);
+
+    uint32_t *words = (uint32_t *)work;
+    unsigned int num_words = size / 4;
+
+    // Write first word to logical index 16
+    fpga_write_register(16, words[0]);
+
+    // Write remaining words to logical index 17
+    for (unsigned int i = 1; i < num_words; i++) {
+        fpga_write_register(17, words[i]);
+    }
+
+    pthread_mutex_unlock(&work_mutex);
+    return 0;
 }
 ```
 

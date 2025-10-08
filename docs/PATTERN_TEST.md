@@ -16,7 +16,11 @@ Each ASIC has its own pattern file (`btc-asic-000.bin` through `btc-asic-127.bin
 
 ### Pattern Entry Format (116 bytes = 0x74)
 
-**VERIFIED from binary analysis and hex dump of actual pattern files:**
+**Verified from single_board_test binary analysis:**
+
+- Function: `parse_bin_file_to_pattern_ex` at ~0x13130
+- Read operation: `fread(v10, 1u, 0x74u, v8)` at line 13155
+- Pattern file path: `/mnt/card/BM1398-pattern/btc-asic-%03d.bin`
 
 ```c
 struct test_pattern {
@@ -81,12 +85,16 @@ Reading code (from single_board_test.c):
 
    - Build 148-byte work packet with:
      - `work_id` = pattern_index
-     - `work_data` = pattern.data[12]
-     - `midstates[0]` = pattern.midstate[32] (use same for all 4 midstates in 4-midstate mode)
-   - Send via FPGA TW_WRITE_COMMAND
+     - `work_data` = pattern.data[12] (offset 15 in pattern)
+     - `midstates[0-3]` = pattern.midstate[32] (offset 27 in pattern, same for all 4 midstates in 4-midstate mode)
+   - Send via FPGA indirect registers 16/17 (function `sub_22B10` at 0x22B10)
+   - All words byte-swapped before sending
 
-3. **Collect Nonces**: Monitor FPGA RETURN_NONCE register
+3. **Collect Nonces**: Monitor FPGA nonce FIFO registers
 
+   - Read functions: `sub_22398` (single read) or `sub_223BC` (double read) at 0x22398/0x223BC
+   - Reads logical index 4 (RETURN_NONCE at 0x010)
+   - Reads logical index 5 (NONCE_NUMBER_IN_FIFO at 0x018)
    - Parse response to extract:
      - ASIC index (from nonce value using address_interval)
      - Core ID (from nonce value)
@@ -270,9 +278,34 @@ ASICs are not returning nonces. Investigating:
 4. Review factory test for missing ASIC register writes
 5. Consider voltage adjustment after initialization
 
+## Key Verified Functions (from single_board_test binary)
+
+### Pattern Loading
+
+- **Function**: `parse_bin_file_to_pattern_ex` at ~0x13130
+- **Reads**: 116 bytes (0x74) per pattern entry
+- **Memory**: 124 bytes (0x7C) after processing
+- **Skips**: Unused patterns (8 pattern slots per core, reads only Pattern_Number)
+
+### Work Sending
+
+- **4-midstate function**: `software_pattern_4_midstate_send_function` at ~0x12760
+- **8-midstate function**: `software_pattern_8_midstate_send_function` at ~0x12930
+- **FPGA write**: `sub_22B10` at 0x22B10
+  - First word → Logical index 16
+  - Remaining words → Logical index 17 (looped)
+  - Thread-safe with pthread mutex
+
+### Nonce Reading
+
+- **Single read**: `sub_22398` at 0x22398
+- **Double read**: `sub_223BC` at 0x223BC (for stability)
+- **Registers**:
+  - Logical index 4 → Physical 0x010 (RETURN_NONCE)
+  - Logical index 5 → Physical 0x018 (NONCE_NUMBER_IN_FIFO)
+
 ## References
 
 - `/home/danielsokil/Downloads/Bitmain_Test_Fixtures/S19_Pro/BM1398-pattern/` - Pattern binary files
-- `single_board_test.c` - Factory test implementation
-- `BTC_software_pattern_check_nonce()` - Nonce validation logic
-- `parse_bin_file_to_pattern_ex()` - Pattern file parser
+- `single_board_test.c` - Factory test decompiled implementation
+- **Verified addresses**: All function addresses confirmed from binary analysis (2025-10-07)
