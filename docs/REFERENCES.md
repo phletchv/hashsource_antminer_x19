@@ -44,7 +44,7 @@ This document catalogs all reference projects available for implementing BM13xx 
 
 ### 1. Bitmain_Peek/S19_Pro
 
-**Location:** `/home/danielsokil/Downloads/Bitmain_Peek/S19_Pro`
+**Location:** `[EXTERNAL]/Bitmain_Peek/S19_Pro` (not in repo)
 
 **Project Type:** Complete firmware dump collection with extensive Ghidra decompilation
 
@@ -111,7 +111,7 @@ etc/topol.conf (3 variants) - ASIC addressing, topology
 
 ### 2. Bitmain_Test_Fixtures
 
-**Location:** `/home/danielsokil/Downloads/Bitmain_Test_Fixtures`
+**Location:** `[EXTERNAL]/Bitmain_Test_Fixtures` (not in repo)
 
 **Project Type:** Bitmain test fixture firmware collection (factory board test software)
 
@@ -210,7 +210,7 @@ usleep(50000);
 
 ### 3. bitmain_antminer_binaries
 
-**Location:** `/home/danielsokil/Lab/HashSource/bitmain_antminer_binaries`
+**Location:** `[EXTERNAL]/bitmain_antminer_binaries` (not in repo)
 
 **Project Type:** Reverse engineering repository with decompiled firmware
 
@@ -281,7 +281,7 @@ void BM1391_set_config(uint8_t chain, uint8_t asic_addr, uint8_t reg_addr,
 
 ### 4. bmminer_NBP1901
 
-**Location:** `/home/danielsokil/Lab/HashSource/bmminer_NBP1901`
+**Location:** `[EXTERNAL]/bmminer_NBP1901` (not in repo)
 
 **Project Type:** S19 Pro specific reverse engineering
 
@@ -371,7 +371,7 @@ axi_fpga_addr[0x05] = nonce_data[1];  // Word 5
 
 ### 5. bm1397-protocol (Rust)
 
-**Location:** `/home/danielsokil/Lab/GPTechinno/bm1397-protocol`
+**Location:** `[EXTERNAL]/bm1397-protocol` (not in repo)
 
 **Project Type:** Complete Rust library for BM1397 protocol
 
@@ -503,7 +503,7 @@ send(Command::write_reg(PLL0Parameter::default()
 
 ### 6. bm13xx-hla (Logic Analyzer)
 
-**Location:** `/home/danielsokil/Lab/GPTechinno/bm13xx-hla`
+**Location:** `[EXTERNAL]/bm13xx-hla` (not in repo)
 
 **Project Type:** Saleae Logic Analyzer protocol decoder (Python)
 
@@ -622,7 +622,7 @@ else:
 
 ### 7. skot/BM1397
 
-**Location:** `/home/danielsokil/Lab/skot/BM1397`
+**Location:** `[EXTERNAL]/skot/BM1397` (not in repo)
 
 **Project Type:** Pure documentation repository (markdown + diagrams)
 
@@ -726,7 +726,7 @@ High-Speed (6.25 Mbps):
 
 ### 8. bm13xx-rs (Rust)
 
-**Location:** `/home/danielsokil/Lab/GPTechinno/bm13xx-rs`
+**Location:** `[EXTERNAL]/bm13xx-rs` (not in repo)
 
 **Project Type:** Open-source Rust driver library (production-ready)
 
@@ -833,7 +833,7 @@ examples/
 
 ### 9. bitmaintech (Official Source)
 
-**Location:** `/home/danielsokil/Lab/HashSource/bitmaintech`
+**Location:** `[EXTERNAL]/bitmaintech` (not in repo)
 
 **Project Type:** Official Bitmain source code repository
 
@@ -967,7 +967,7 @@ struct vil_work_1387 {
 
 ### 10. kanoi/cgminer
 
-**Location:** `/home/danielsokil/Lab/kanoi/cgminer`
+**Location:** `[EXTERNAL]/kanoi/cgminer` (not in repo)
 
 **Project Type:** Open-source Bitcoin mining software (Kano's fork)
 
@@ -1136,9 +1136,9 @@ cd /root
 **2. Extract BM1362/BM1398 Protocol from cgminer**
 
 ```bash
-# Copy critical driver
-cp /home/danielsokil/Lab/kanoi/cgminer/driver-gekko.c \
-   /home/danielsokil/Lab/HashSource/hashsource_antminer_x19/reference/
+# Copy critical driver from external reference
+cp [EXTERNAL]/kanoi/cgminer/driver-gekko.c \
+   ./reference/
 
 # Extract init sequence
 grep -A 20 "BM1362\|BM1370" driver-gekko.c > bm1362_init.txt
@@ -1148,7 +1148,7 @@ grep -A 20 "BM1362\|BM1370" driver-gekko.c > bm1362_init.txt
 
 ```bash
 # Analyze S19 Pro bmminer (if chip is BM1398)
-cd /home/danielsokil/Downloads/Bitmain_Peek/S19_Pro
+cd [EXTERNAL]/Bitmain_Peek/S19_Pro
 cd _ghidra/bins/bmminer-2f464d0989b763718a6fbbdee35424ae/decomps
 
 # Search for initialization functions
@@ -1254,23 +1254,23 @@ grep -r "init\|reset\|config" *.c | head -50
 ## File Path Quick Reference
 
 ```bash
-# Stock Firmware Analysis
-/home/danielsokil/Downloads/Bitmain_Peek/S19_Pro/
-/home/danielsokil/Downloads/Bitmain_Test_Fixtures/S19_Pro/
+# Stock Firmware Analysis (external references, not in repo)
+[EXTERNAL]/Bitmain_Peek/S19_Pro/
+[EXTERNAL]/Bitmain_Test_Fixtures/S19_Pro/
 
-# Protocol Documentation
-/home/danielsokil/Lab/skot/BM1397/
-/home/danielsokil/Lab/GPTechinno/bm13xx-hla/
+# Protocol Documentation (external references, not in repo)
+[EXTERNAL]/skot/BM1397/
+[EXTERNAL]/GPTechinno/bm13xx-hla/
 
-# Source Code (Rust)
-/home/danielsokil/Lab/GPTechinno/bm1397-protocol/
-/home/danielsokil/Lab/GPTechinno/bm13xx-rs/
+# Source Code - Rust (external references, not in repo)
+[EXTERNAL]/GPTechinno/bm1397-protocol/
+[EXTERNAL]/GPTechinno/bm13xx-rs/
 
-# Source Code (C - Production)
-/home/danielsokil/Lab/kanoi/cgminer/driver-gekko.c
-/home/danielsokil/Lab/HashSource/bitmaintech/bmminer-mix/driver-btm-c5.c
+# Source Code - C Production (external references, not in repo)
+[EXTERNAL]/kanoi/cgminer/driver-gekko.c
+[EXTERNAL]/bitmaintech/bmminer-mix/driver-btm-c5.c
 
-# Decompiled Binaries
-/home/danielsokil/Lab/HashSource/bitmain_antminer_binaries/
-/home/danielsokil/Lab/HashSource/bmminer_NBP1901/
+# Decompiled Binaries (external references, not in repo)
+[EXTERNAL]/bitmain_antminer_binaries/
+[EXTERNAL]/bmminer_NBP1901/
 ```

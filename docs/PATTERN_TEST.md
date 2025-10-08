@@ -309,7 +309,7 @@ int check_pattern_nonce(uint32_t received_nonce, int asic_id,
 Found in Bitmain_Test_Fixtures reference:
 
 ```
-/home/danielsokil/Downloads/Bitmain_Test_Fixtures/S19_Pro/BM1398-pattern/
+[EXTERNAL]/Bitmain_Test_Fixtures/S19_Pro/BM1398-pattern/
   - btc-asic-000.bin through btc-asic-127.bin
   - Each file: 565KB (579,072 bytes)
 ```
@@ -427,8 +427,8 @@ All addresses and function names verified via Binary Ninja decompilation and str
 
 ## References
 
-- `/home/danielsokil/Downloads/Bitmain_Test_Fixtures/S19_Pro/BM1398-pattern/` - Pattern binary files
-- `single_board_test.c` - Factory test decompiled implementation
+- `[EXTERNAL]/Bitmain_Test_Fixtures/S19_Pro/BM1398-pattern/` - Pattern binary files (not in repo)
+- `single_board_test.c` - Factory test decompiled implementation (not in repo)
 - **Verified addresses**: All function addresses confirmed from binary analysis (2025-10-07)
 
 ---
@@ -520,7 +520,7 @@ All pattern test implementation details have been **cross-verified** against `si
 
 ### Pattern File Verification
 
-**File Location**: `/home/danielsokil/Downloads/Bitmain_Test_Fixtures/S19_Pro/BM1398-pattern/`
+**File Location**: `[EXTERNAL]/Bitmain_Test_Fixtures/S19_Pro/BM1398-pattern/`
 
 - Files: `btc-asic-000.bin` through `btc-asic-127.bin`
 - Each file size: **579,072 bytes** (565 KB)

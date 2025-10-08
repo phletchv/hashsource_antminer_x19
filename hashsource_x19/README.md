@@ -281,4 +281,4 @@ All FPGA access uses `/dev/axi_fpga_dev` character device:
 
 ## References
 
-- Stock firmware analysis in `/home/danielsokil/Downloads/Bitmain_Peek/S19_Pro/`
+- Stock firmware analysis in `[EXTERNAL]/Bitmain_Peek/S19_Pro/` (not in repo)
