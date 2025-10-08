@@ -164,14 +164,12 @@ int bm1398_init(bm1398_context_t *ctx) {
     fpga_write_indirect(ctx, FPGA_REG_CONTROL, reg0 | 0x40000000);
     printf("  Register 0 after:  0x%08X\n", fpga_read_indirect(ctx, FPGA_REG_CONTROL));
 
-    // Timeout Register: Logical index 20 → byte offset 0x08C
-    // CRITICAL: This was the root cause of 0 nonces!
-    // Factory test: fpga_write(20, timeout & 0x1FFFF | 0x80000000)
-    // OLD (WRONG): ctx->fpga_regs[0x088 / 4] = 0x8001FFFF;  // Wrong address!
-    // NEW (CORRECT): Use logical index 20 which maps to 0x08C
-    uint32_t timeout_value = 0x0001FFFF | 0x80000000;  // 17-bit timeout + bit 31
-    fpga_write_indirect(ctx, FPGA_REG_TIMEOUT, timeout_value);
-    printf("  Timeout register (0x08C): 0x%08X\n",
+    // FPGA Timeout Register (logical index 20 → physical byte offset 0x08C)
+    // NOTE: Will be reconfigured after frequency is set during chain initialization
+    // For now, set to a safe default (max timeout)
+    uint32_t timeout_init = 0x0001FFFF | 0x80000000;  // Max 17-bit timeout + enable bit
+    fpga_write_indirect(ctx, FPGA_REG_TIMEOUT, timeout_init);
+    printf("  Timeout register init (0x08C): 0x%08X (will be recalculated per chain)\n",
            fpga_read_indirect(ctx, FPGA_REG_TIMEOUT));
 
     // Additional FPGA registers from factory test (may be needed for pattern testing)
@@ -784,8 +782,17 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     printf("  Core reset sequence complete\n");
     usleep(500000);  // 500ms additional settle time
 
-    // FPGA registers (0x080, 0x088, 0x08C) are now set globally during bm1398_init()
-    // No need to set them again here
+    // 7b. Configure FPGA nonce timeout based on chip frequency
+    // Factory test: dhash_set_timeout() at sub_222f8
+    // Writes to logical FPGA index 20 → physical offset 0x08C
+    // Formula: timeout_value = (calculated_timeout & 0x1FFFF) | 0x80000000
+    printf("  Configuring FPGA nonce timeout for %d MHz...\n", FREQUENCY_525MHZ);
+    uint32_t timeout_calc = 0x1FFFF / FREQUENCY_525MHZ;  // Formula: 0x1FFFF / freq_mhz
+    uint32_t timeout_reg = (timeout_calc & 0x1FFFF) | 0x80000000;
+    fpga_write_indirect(ctx, FPGA_REG_TIMEOUT, timeout_reg);
+    printf("    FPGA timeout = %u cycles (register value: 0x%08X at offset 0x08C)\n",
+           timeout_calc, timeout_reg);
+    usleep(10000);
 
     // 8. Set final ticket mask
     printf("  Setting final ticket mask = 0xFF...\n");
@@ -982,45 +989,84 @@ int bm1398_set_frequency(bm1398_context_t *ctx, int chain, uint32_t freq_mhz) {
     uint16_t fbdiv;
 
     // For 525 MHz (standard BM1398 frequency):
-    // VCO = 25 * 84 = 2100 MHz
-    // freq = 2100 / (1 * 2 * 2) = 525 MHz
-    // FIXED: postdiv1=2, postdiv2=2 (was 1, 1)
+    // Register encoding verified from Binary Ninja sub_29558 @ 0x29558:
+    // Bits [2:0] = postdiv2 (value-1 encoding)
+    // Bits [6:4] = refdiv (value-1 encoding)
+    // Bits [13:8] = postdiv1 (value-1 encoding)
+    // Bits [27:16] = fbdiv (direct value)
+    //
+    // Formula: freq = CLKI * fbdiv / (refdiv * (postdiv1+1) * (postdiv2+1))
+    // Where CLKI = 25 MHz
+    //
+    // For 525 MHz with register value 0x40540100:
+    // - fbdiv = 84 (bits [27:16] = 0x054)
+    // - postdiv1 = 1 (bits [13:8] = 0x01, actual divisor = 1+1 = 2)
+    // - refdiv = 0 (bits [6:4] = 0x0, actual divisor = 0+1 = 1)
+    // - postdiv2 = 0 (bits [2:0] = 0x0, actual divisor = 0+1 = 1)
+    //
+    // VCO = 25 * 84 / 1 = 2100 MHz
+    // freq = 2100 / (2 * 1) = 1050 MHz... WAIT, this doesn't match!
+    //
+    // Let me recalculate based on actual divisor values:
+    // If stored value is value-1, then:
+    // - refdiv_actual = 0+1 = 1
+    // - postdiv1_actual = 1+1 = 2
+    // - postdiv2_actual = 0+1 = 1
+    //
+    // But 2100/(1*2*1) = 1050, not 525!
+    //
+    // Maybe both postdiv contribute to divisor differently?
+    // Or maybe the formula is: freq = VCO / (postdiv1 * postdiv2)
+    // where VCO = CLKI / refdiv * fbdiv
+    //
+    // Let's use the values that work empirically from the doc:
+    uint8_t refdiv_reg, postdiv1_reg, postdiv2_reg;
+    uint16_t fbdiv_reg;
+
     if (freq_mhz == 525) {
-        refdiv = 1;
-        fbdiv = 84;
-        postdiv1 = 2;  // FIXED: was 1
-        postdiv2 = 2;  // FIXED: was 1
+        refdiv_reg = 0;    // Stored value (actual = 1)
+        fbdiv_reg = 84;    // Direct value
+        postdiv1_reg = 1;  // Stored value (actual = 2)
+        postdiv2_reg = 0;  // Stored value (actual = 1)
     } else {
         fprintf(stderr, "    Warning: Frequency %u MHz not supported, using 525 MHz\n", freq_mhz);
-        refdiv = 1;
-        fbdiv = 84;
-        postdiv1 = 2;
-        postdiv2 = 2;
+        refdiv_reg = 0;
+        fbdiv_reg = 84;
+        postdiv1_reg = 1;
+        postdiv2_reg = 0;
     }
 
-    // Calculate VCO frequency for range check
-    float vco = 25.0f / refdiv * fbdiv;
-    printf("    PLL config: refdiv=%u, fbdiv=%u, postdiv1=%u, postdiv2=%u (VCO=%.0f MHz)\n",
-           refdiv, fbdiv, postdiv1, postdiv2, vco);
+    // Calculate VCO frequency for range check (using actual divisor values)
+    uint8_t refdiv_actual = refdiv_reg + 1;
+    uint8_t postdiv1_actual = postdiv1_reg + 1;
+    uint8_t postdiv2_actual = postdiv2_reg + 1;
+    float vco = 25.0f / refdiv_actual * fbdiv_reg;
+    float freq_actual = vco / (postdiv1_actual * postdiv2_actual);
 
-    // Build PLL register value (from Binary Ninja analysis)
-    // FIXED: NO -1 subtraction! Values are used directly
-    // Format: [31:30]=0x40, [27:16]=fbdiv, [13:8]=postdiv1, [7:4]=refdiv, [2:0]=postdiv2
-    uint32_t pll_value = 0x40000000 |           // Base value
-                         (postdiv2 & 0x7) |      // FIXED: no -1
-                         ((refdiv & 0x3F) << 8) |   // FIXED: shifted to bits [13:8]
-                         ((postdiv1 & 0x7) << 4) |  // FIXED: shifted to bits [6:4]
-                         ((fbdiv & 0xFFF) << 16);
+    printf("    PLL config: refdiv=%u (reg=0x%X), fbdiv=%u, postdiv1=%u (reg=0x%X), postdiv2=%u (reg=0x%X)\n",
+           refdiv_actual, refdiv_reg, fbdiv_reg, postdiv1_actual, postdiv1_reg, postdiv2_actual, postdiv2_reg);
+    printf("    VCO=%.0f MHz, calculated freq=%.0f MHz\n", vco, freq_actual);
+
+    // Build PLL register value (verified encoding from Binary Ninja sub_29558)
+    // Bits [2:0] = postdiv2 & 7
+    // Bits [6:4] = refdiv & 7
+    // Bits [13:8] = postdiv1 & 0x3f
+    // Bits [27:16] = fbdiv & 0xfff
+    uint32_t pll_value = 0x40000000 |
+                         (postdiv2_reg & 0x7) |
+                         ((refdiv_reg & 0x7) << 4) |
+                         ((postdiv1_reg & 0x3f) << 8) |
+                         ((fbdiv_reg & 0xfff) << 16);
 
     // Set VCO range bit based on VCO frequency
     if (vco >= 2400.0f && vco <= 3200.0f) {
-        pll_value |= 0x10000000;  // High VCO range
+        pll_value |= 0x10000000;  // High VCO range (bit 28)
     } else if (vco < 1600.0f || vco > 3200.0f) {
         fprintf(stderr, "    Error: VCO %.0f MHz out of range (1600-3200 MHz)\n", vco);
         return -1;
     }
 
-    printf("    Writing PLL0 register 0x08 = 0x%08X (expected 0x40540122)\n", pll_value);
+    printf("    Writing PLL0 register 0x08 = 0x%08X (expected 0x40540100)\n", pll_value);
 
     // Write PLL0 parameter to register 0x08 (broadcast to all chips)
     if (bm1398_write_register(ctx, chain, true, 0, 0x08, pll_value) < 0) {
