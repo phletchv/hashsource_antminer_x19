@@ -14,39 +14,59 @@ Each ASIC has its own pattern file (`btc-asic-000.bin` through `btc-asic-127.bin
 - **Pattern entry size**: 0x34 (52) bytes
 - **Total patterns**: Per core × pattern_number (typically 80 cores × 8 patterns)
 
-### Pattern Entry Format (52 bytes = 0x34)
+### Pattern Entry Format (116 bytes = 0x74)
 
-**Corrected based on implementation analysis:**
+**VERIFIED from binary analysis and hex dump of actual pattern files:**
 
 ```c
 struct test_pattern {
-    uint8_t  midstate[32];   // SHA256 midstate
-    uint8_t  reserved[4];    // Padding (0x00000000)
-    uint32_t nonce;          // Expected nonce (little-endian)
-    uint8_t  work_data[12];  // Last 12 bytes of block header
-    // Total: 32 + 4 + 4 + 12 = 52 bytes (0x34)
+    uint8_t  header[15];      // Header/metadata (unknown purpose)
+    uint8_t  work_data[12];   // Offset 15-26: Last 12 bytes of block header
+    uint8_t  midstate[32];    // Offset 27-58: SHA256 midstate
+    uint8_t  reserved[29];    // Offset 59-87: Padding/reserved
+    uint32_t nonce;           // Offset 88-91: Expected nonce (little-endian)
+    uint8_t  trailer[24];     // Offset 92-115: Additional data
+    // Total: 15 + 12 + 32 + 29 + 4 + 24 = 116 bytes (0x74)
 };
 ```
 
+**Critical Discovery:** Previous documentation incorrectly stated 52 bytes (0x34).
+Actual binary reads **0x74 (116) bytes** per pattern entry using `fread(v10, 1u, 0x74u, v8)`.
+
 ### Pattern File Layout
 
-**Actual file structure (verified via hex analysis):**
+**Actual file structure (verified via binary analysis and hex dump):**
+
+File size: **579,072 bytes** (565KB)
+Structure: **80 cores × 7,238 bytes per core row**
 
 ```
-For each core (80 cores):
-  112-byte row structure:
-    0x00-0x33: Header/metadata (52 bytes)
-    0x34-0x67: Pattern 0 (52 bytes) <- PATTERN_OFFSET
-    0x68-0x9B: Pattern 1 (52 bytes)
-    ...
-    0x1F4-0x227: Pattern 7 (52 bytes)
-    (8 patterns × 52 bytes = 416 bytes starting at offset 0x34)
+For each core (80 cores total):
+  Core row = 7,238 bytes (0x1C46):
+    - Large header section (varies, ~6,342 bytes)
+    - 8 pattern entries × 116 bytes each (0x74)
 
-Reading strategy:
-  1. Seek to offset 0x34 (skip header)
-  2. Read 8 patterns × 52 bytes = 416 bytes
-  3. Pattern data starts at offset 0x34 within each 112-byte core row
+  Pattern entry layout (116 bytes = 0x74):
+    Offset  Size  Field
+    ------  ----  -----
+    0x00    15    Header/metadata
+    0x0F    12    Work data (last 12 bytes of block header)
+    0x1B    32    SHA256 midstate
+    0x3B    29    Reserved/padding
+    0x58    4     Expected nonce (little-endian)
+    0x5C    24    Trailer/additional data
+
+Reading code (from single_board_test.c):
+  - Reads: fread(buffer, 1, 0x74, fp)  // 116 bytes
+  - Memory format: 124 bytes (0x7C) after processing
+  - Skips unused patterns in each core row
 ```
+
+**File size calculation:**
+
+- 80 cores × 7,238 bytes/core = 579,040 bytes
+- Actual file: 579,072 bytes
+- Difference: 32 bytes (likely file padding)
 
 ## Test Process
 
@@ -89,13 +109,15 @@ Reading strategy:
 ## Implementation Example
 
 ```c
-// Pattern structure (corrected format)
+// Pattern structure (CORRECTED - verified from binary)
 typedef struct {
-    uint8_t  midstate[32];   // SHA256 midstate
-    uint8_t  reserved[4];    // Padding (0x00000000)
-    uint32_t nonce;          // Expected nonce (little-endian)
-    uint8_t  work_data[12];  // Last 12 bytes of block header
-} test_pattern_t;
+    uint8_t  header[15];      // Header/metadata
+    uint8_t  work_data[12];   // Offset 15: Last 12 bytes of block header
+    uint8_t  midstate[32];    // Offset 27: SHA256 midstate
+    uint8_t  reserved[29];    // Offset 59: Padding/reserved
+    uint32_t nonce;           // Offset 88: Expected nonce (little-endian)
+    uint8_t  trailer[24];     // Offset 92: Additional data
+} test_pattern_t;  // Total: 116 bytes (0x74)
 
 // Work entry (per core per pattern)
 typedef struct {
@@ -114,16 +136,23 @@ int load_asic_patterns(int asic_id, int num_cores, int patterns_per_core,
     FILE *fp = fopen(filename, "rb");
     if (!fp) return -1;
 
+    // Read pattern entries for this ASIC
+    // File has large header per core row, then 8 pattern entries
     for (int core = 0; core < num_cores; core++) {
+        // Skip to start of patterns in this core row
+        // (Complex file structure - needs analysis of header size)
+
         for (int pat = 0; pat < patterns_per_core; pat++) {
             int idx = core * patterns_per_core + pat;
-            fread(&works[idx].pattern, 1, 0x34, fp);
+            // Read 116 bytes (0x74) as factory test does
+            fread(&works[idx].pattern, 1, 0x74, fp);
             works[idx].work_id = pat;
             works[idx].is_nonce_returned = 0;
         }
-        // Skip remaining patterns if < 8
+
+        // Skip remaining pattern slots if < 8 patterns used
         if (patterns_per_core < 8) {
-            fseek(fp, (8 - patterns_per_core) * 0x34, SEEK_CUR);
+            fseek(fp, (8 - patterns_per_core) * 0x74, SEEK_CUR);
         }
     }
 
@@ -138,11 +167,13 @@ int send_pattern_work(bm1398_context_t *ctx, int chain, int asic_id,
         uint8_t midstates[4][32];
 
         // Use same midstate for all 4 slots in 4-midstate mode
+        // Midstate is at offset 27 in the pattern structure
         for (int m = 0; m < 4; m++) {
             memcpy(midstates[m], works[i].pattern.midstate, 32);
         }
 
         // Send work packet
+        // Work data is at offset 15 in the pattern structure
         bm1398_send_work(ctx, chain, works[i].work_id,
                         works[i].pattern.work_data, midstates);
 

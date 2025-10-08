@@ -26,7 +26,19 @@
 
 FPGA base address: `0x40000000`, size: 5120 bytes (0x1400)
 
-### Key Registers (from bitmaintech + S19 analysis)
+**⚠️ CRITICAL: Indirect Register Mapping (2025-10-07 Discovery)**
+
+Both `bmminer` and `single_board_test` use **indirect register access** via a 110-entry mapping table, NOT direct byte offsets!
+
+**Key indirect mappings:**
+
+- Logical index 0 → word 0 (0x000) - Control register
+- Logical index 16 → word 16 (0x040) - Work FIFO first word
+- Logical index 17 → word 16 (0x040) - Work FIFO rest (SAME register!)
+- Logical index 20 → word 35 (0x08C) - **Timeout register** (NOT 0x014!)
+- Logical indices 35, 36, 42 → Work control/enable registers
+
+### Key Registers (direct access - non-mapped)
 
 | Offset      | Name                    | Purpose                                   |
 | ----------- | ----------------------- | ----------------------------------------- |
@@ -466,39 +478,62 @@ void set_chain_frequency(int chain, uint32_t freq_mhz) {
 
 ### 4-Midstate Work Packet (148 bytes = 0x94)
 
+**VERIFIED from factory test binary analysis (sub_22B10):**
+
 ```c
 struct work_packet_4mid {
-    uint8_t header[2];       // [0]=0x01, [1]=chain_id|0x80
-    uint32_t work_id;        // Big-endian work ID
-    uint8_t work_data[12];   // Last 12 bytes of block header
-    uint8_t midstate[128];   // 4x 32-byte SHA256 midstates
-};
+    uint8_t work_type;       // [0] = 0x01
+    uint8_t chain_id;        // [1] = chain | 0x80
+    uint8_t reserved[2];     // [2-3] = 0x00
+    uint32_t work_id;        // [4-7] = Big-endian work ID
+    uint8_t work_data[12];   // [8-19] = Last 12 bytes of block header
+    uint8_t midstate[4][32]; // [20-147] = 4x 32-byte SHA256 midstates
+};  // Total: 148 bytes (0x94)
 
 void send_work_4midstate(int chain, uint32_t work_id,
-                         const uint8_t *header,
+                         const uint8_t *work_data_12bytes,
                          const uint8_t midstates[4][32]) {
     struct work_packet_4mid work;
+    memset(&work, 0, sizeof(work));
 
-    work.header[0] = 0x01;
-    work.header[1] = chain | 0x80;
-    work.work_id = __builtin_bswap32(work_id);  // Big-endian
-    memcpy(work.work_data, &header[64-12], 12);
+    // Build packet header
+    work.work_type = 0x01;
+    work.chain_id = chain | 0x80;
+    work.reserved[0] = 0x00;
+    work.reserved[1] = 0x00;
+    work.work_id = __builtin_bswap32(work_id);  // Convert to big-endian
 
+    // Copy work data (12 bytes from pattern offset 15)
+    memcpy(work.work_data, work_data_12bytes, 12);
+
+    // Copy 4 midstates (from pattern offset 27, 32 bytes each)
     for (int i = 0; i < 4; i++) {
-        memcpy(&work.midstate[i*32], midstates[i], 32);
+        memcpy(work.midstate[i], midstates[i], 32);
     }
 
     // Byte-swap all 32-bit words in packet
+    // Factory test swaps from offset after headers to end
     uint32_t *words = (uint32_t *)&work;
     for (int i = 0; i < sizeof(work)/4; i++) {
         words[i] = __builtin_bswap32(words[i]);
     }
 
-    // Write to FPGA registers 0x40 (TW_WRITE_COMMAND)
-    // or via BC_COMMAND_BUFFER (0xC4) - needs clarification
-    send_work_to_fpga(chain, &work, sizeof(work));
+    // Send via FPGA indirect register mapping
+    // Logical index 16 for first word, index 17 for remaining words
+    // Both map to physical register 0x040 (FIFO writes)
+    send_work_via_indirect_mapping(chain, &work, sizeof(work));
 }
 ```
+
+**Work Packet Construction (verified):**
+
+1. Clear 148-byte buffer
+2. Set header: type=0x01, chain_id=(chain|0x80)
+3. Set work_id (byte-swapped to big-endian)
+4. Copy 12 bytes work_data from pattern[15:27]
+5. Copy 4× 32 bytes midstates from pattern[27:59] (same midstate for all 4 slots in pattern test)
+6. Byte-swap all 32-bit words in the entire packet
+7. Send to FPGA using indirect register writes (indices 16/17 → register 0x040)
 
 ---
 
@@ -681,7 +716,7 @@ Despite implementing **ALL** factory test initialization steps (16 complete conf
   - do_core_reset() - Post-baud rate reset sequence
   - dhash_set_timeout() - FPGA timeout configuration
   - set_clock_delay_control() - Core timing parameters
-- Bitmain_Peek S19_Pro BMMINER_ANALYSIS.md
+- Bitmain_Peek S19_Pro bmminer from Stock Firmware, decompiled
 - bitmaintech bmminer-mix driver-btm-c5.h/c (S9 source)
 - Config.ini: BM1398 test configuration (Pwth_Sel=1, CCdly_Sel=0)
 
