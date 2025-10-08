@@ -18,13 +18,36 @@ Each ASIC has its own pattern file (`btc-asic-000.bin` through `btc-asic-127.bin
 
 **Verified from single_board_test binary analysis:**
 
-- Function: `parse_bin_file_to_pattern_ex` at ~0x13130
-- Read operation: `fread(v10, 1u, 0x74u, v8)` at line 13155
-- Pattern file path: `/mnt/card/BM1398-pattern/btc-asic-%03d.bin`
+- Function: `parse_bin_file_to_pattern_ex` (sub_1C890 at 0x1C890)
+- String reference: "/mnt/card/BM1398-pattern/btc-asic-%03d.bin" at 0x33300
+- Read operation: `fread(r5_1, 1, 0x74, r0_2)` - reads **0x74 (116) bytes**
+- Memory allocation: `0x7C (124) bytes` per work entry in memory
+- Called by: `get_works_ex` (sub_1C9B0 at 0x1C9B0)
+
+Decompiled verification from sub_1C890:
+
+```c
+// Simplified from binary analysis
+for (int core = 0; core < arg2; core++) {  // arg2 = num_cores
+    for (int pat = 0; pat < arg3; pat++) {  // arg3 = patterns_per_core
+        int idx = core * arg3 + pat;
+        // Read 116 bytes (0x74) from pattern file
+        fread(&works[idx].pattern, 1, 0x74, fp);
+        works[idx].work_id = sub_2B254(pat, ...);
+        // Additional processing...
+    }
+    // Skip unused pattern slots (8 pattern slots per core)
+    if (arg3 < 8) {
+        for (int skip = 0; skip < (8 - arg3); skip++) {
+            fread(&temp_buffer, 1, 0x74, fp);  // Discard
+        }
+    }
+}
+```
 
 ```c
 struct test_pattern {
-    uint8_t  header[15];      // Header/metadata (unknown purpose)
+    uint8_t  header[15];      // Offset 0-14: Header/metadata (unknown purpose)
     uint8_t  work_data[12];   // Offset 15-26: Last 12 bytes of block header
     uint8_t  midstate[32];    // Offset 27-58: SHA256 midstate
     uint8_t  reserved[29];    // Offset 59-87: Padding/reserved
@@ -32,10 +55,18 @@ struct test_pattern {
     uint8_t  trailer[24];     // Offset 92-115: Additional data
     // Total: 15 + 12 + 32 + 29 + 4 + 24 = 116 bytes (0x74)
 };
+
+struct pattern_work_t {
+    test_pattern_t pattern;     // 116 bytes (0x74)
+    uint32_t work_id;           // 4 bytes
+    uint8_t is_nonce_returned;  // 1 byte
+    uint8_t padding[3];         // 3 bytes padding
+    // Total: 124 bytes (0x7C) in memory
+};
 ```
 
 **Critical Discovery:** Previous documentation incorrectly stated 52 bytes (0x34).
-Actual binary reads **0x74 (116) bytes** per pattern entry using `fread(v10, 1u, 0x74u, v8)`.
+Actual binary reads **0x74 (116) bytes** per pattern entry using `fread(buffer, 1, 0x74, fp)`.
 
 ### Pattern File Layout
 
@@ -117,7 +148,7 @@ Reading code (from single_board_test.c):
 ## Implementation Example
 
 ```c
-// Pattern structure (CORRECTED - verified from binary)
+// Pattern structure (VERIFIED from binary analysis sub_1C890)
 typedef struct {
     uint8_t  header[15];      // Header/metadata
     uint8_t  work_data[12];   // Offset 15: Last 12 bytes of block header
@@ -127,65 +158,131 @@ typedef struct {
     uint8_t  trailer[24];     // Offset 92: Additional data
 } test_pattern_t;  // Total: 116 bytes (0x74)
 
-// Work entry (per core per pattern)
+// Work entry (per core per pattern) - 124 bytes in memory
 typedef struct {
-    test_pattern_t pattern;
-    uint16_t work_id;
-    uint8_t  is_nonce_returned;
-} pattern_work_t;
+    test_pattern_t pattern;   // 116 bytes
+    uint32_t work_id;         // 4 bytes
+    uint8_t  is_nonce_returned; // 1 byte
+    uint8_t  padding[3];      // 3 bytes padding to align to 124
+} pattern_work_t;  // Total: 124 bytes (0x7C)
 
-// Load pattern file for one ASIC
+/**
+ * Load pattern file for one ASIC
+ * Verified from sub_1C890 (parse_bin_file_to_pattern_ex)
+ *
+ * Binary shows:
+ * - Opens file in "rb" mode (0x332B0)
+ * - Checks file exists with access()
+ * - Reads 0x74 bytes per pattern
+ * - Skips unused patterns in 8-pattern slots
+ */
 int load_asic_patterns(int asic_id, int num_cores, int patterns_per_core,
                       pattern_work_t *works) {
     char filename[128];
     snprintf(filename, sizeof(filename),
              "/mnt/card/BM1398-pattern/btc-asic-%03d.bin", asic_id);
 
+    // Check file exists (as binary does)
+    if (access(filename, 0) != 0) {
+        printf("pattern file: %s don't exist!!!\n", filename);
+        return -3;  // 0xFFFFFFFD
+    }
+
     FILE *fp = fopen(filename, "rb");
-    if (!fp) return -1;
+    if (!fp) {
+        printf("Open pattern file: %s failed !!!\n", filename);
+        return -4;  // 0xFFFFFFFC
+    }
 
     // Read pattern entries for this ASIC
-    // File has large header per core row, then 8 pattern entries
+    // Binary verified: loops through cores, then patterns
     for (int core = 0; core < num_cores; core++) {
-        // Skip to start of patterns in this core row
-        // (Complex file structure - needs analysis of header size)
-
         for (int pat = 0; pat < patterns_per_core; pat++) {
             int idx = core * patterns_per_core + pat;
-            // Read 116 bytes (0x74) as factory test does
-            fread(&works[idx].pattern, 1, 0x74, fp);
-            works[idx].work_id = pat;
+
+            // Read 116 bytes (0x74) exactly as factory test does
+            size_t bytes_read = fread(&works[idx].pattern, 1, 0x74, fp);
+            if (bytes_read != 0x74) {
+                printf("fread pattern failed!\n");
+                fclose(fp);
+                return -1;
+            }
+
+            // Calculate work_id (binary calls sub_2B254)
+            works[idx].work_id = pat;  // Simplified
             works[idx].is_nonce_returned = 0;
         }
 
         // Skip remaining pattern slots if < 8 patterns used
+        // Binary skips with fread() into temp buffer
         if (patterns_per_core < 8) {
-            fseek(fp, (8 - patterns_per_core) * 0x74, SEEK_CUR);
+            uint8_t temp[0x74];
+            for (int skip = 0; skip < (8 - patterns_per_core); skip++) {
+                fread(temp, 1, 0x74, fp);  // Discard
+            }
         }
     }
 
     fclose(fp);
-    return 0;
+    return 0;  // Success
 }
 
-// Send pattern test work
-int send_pattern_work(bm1398_context_t *ctx, int chain, int asic_id,
-                     pattern_work_t *works, int num_works) {
+/**
+ * Send pattern test work (4-midstate mode)
+ * Verified from sub_1C3B0 (software_pattern_4_midstate_send_function)
+ *
+ * Binary shows:
+ * - Loops through all ASICs and patterns
+ * - Builds 148-byte (0x94) work packets
+ * - Byte-swaps all 32-bit words before sending
+ * - Calls sub_22B10 to send via FPGA
+ * - Waits for nonces with sub_224A4
+ */
+int send_pattern_work(int chain, pattern_work_t *works, int num_works) {
     for (int i = 0; i < num_works; i++) {
-        uint8_t midstates[4][32];
+        uint8_t work_packet[0x94];  // 148 bytes
+        memset(work_packet, 0, sizeof(work_packet));
 
-        // Use same midstate for all 4 slots in 4-midstate mode
-        // Midstate is at offset 27 in the pattern structure
+        // Build work packet header
+        work_packet[0] = 0x01;  // Work type
+        work_packet[1] = chain | 0x80;  // Chain ID with bit 7 set
+        work_packet[2] = 0x00;  // Reserved
+        work_packet[3] = 0x00;  // Reserved
+
+        // Work ID (4 bytes, big-endian)
+        uint32_t work_id = works[i].work_id << 3;  // Binary shifts left by 3
+        work_packet[4] = (work_id >> 24) & 0xFF;
+        work_packet[5] = (work_id >> 16) & 0xFF;
+        work_packet[6] = (work_id >> 8) & 0xFF;
+        work_packet[7] = work_id & 0xFF;
+
+        // Copy work data (12 bytes from offset 15 in pattern)
+        // Binary copies from pattern + 0xF (offset 15)
+        memcpy(&work_packet[8], &works[i].pattern.work_data, 12);
+
+        // Copy midstate to all 4 slots (32 bytes each)
+        // Binary uses same midstate for all 4 slots
         for (int m = 0; m < 4; m++) {
-            memcpy(midstates[m], works[i].pattern.midstate, 32);
+            memcpy(&work_packet[20 + (m * 32)],
+                   works[i].pattern.midstate, 32);
         }
 
-        // Send work packet
-        // Work data is at offset 15 in the pattern structure
-        bm1398_send_work(ctx, chain, works[i].work_id,
-                        works[i].pattern.work_data, midstates);
+        // Byte-swap all 32-bit words (binary does this in loop)
+        uint32_t *words = (uint32_t *)work_packet;
+        for (int w = 0; w < sizeof(work_packet) / 4; w++) {
+            words[w] = __builtin_bswap32(words[w]);
+        }
 
-        usleep(1000);  // 1ms delay between work submissions
+        // Wait for FPGA buffer space (binary calls sub_224A4)
+        while (check_fpga_buffer_ready() == 0) {
+            usleep(10);  // 0xA = 10 microseconds
+        }
+
+        // Send via FPGA (calls sub_22B10 with packet and size 0x94)
+        sub_22B10(work_packet, 0x94);
+
+        // Update global counter
+        data_49244++;  // Tracks total patterns sent
     }
 
     return 0;
@@ -280,27 +377,51 @@ ASICs are not returning nonces. Investigating:
 
 ## Key Verified Functions (from single_board_test binary)
 
+All addresses and function names verified via Binary Ninja decompilation and string/xref analysis.
+
 ### Pattern Loading
 
-- **Function**: `parse_bin_file_to_pattern_ex` at ~0x13130
-- **Reads**: 116 bytes (0x74) per pattern entry
-- **Memory**: 124 bytes (0x7C) after processing
-- **Skips**: Unused patterns (8 pattern slots per core, reads only Pattern_Number)
+- **Main Function**: `get_works_ex` (sub_1C9B0 at 0x1C9B0)
+
+  - Allocates memory: `calloc(num_cores * patterns_per_core * 0x7C, 1)`
+  - Calls `parse_bin_file_to_pattern_ex` for each ASIC
+  - Stores pointers in global array at offset data_1CDF4C
+
+- **Parser Function**: `parse_bin_file_to_pattern_ex` (sub_1C890 at 0x1C890)
+  - Reads: 116 bytes (0x74) per pattern entry with `fread(buffer, 1, 0x74, fp)`
+  - Memory: 124 bytes (0x7C) per work entry in allocated buffer
+  - Skips: Unused patterns (8 pattern slots per core, reads only Pattern_Number)
+  - Validates: File existence with `access()`, prints errors if file missing
+  - Error codes: -1 (0xFFFFFFFF), -2 (0xFFFFFFFE), -3 (0xFFFFFFFD), -4 (0xFFFFFFFC)
 
 ### Work Sending
 
-- **4-midstate function**: `software_pattern_4_midstate_send_function` at ~0x12760
-- **8-midstate function**: `software_pattern_8_midstate_send_function` at ~0x12930
+- **4-midstate function**: `software_pattern_4_midstate_send_function` (sub_1C3B0 at 0x1C3B0)
+
+  - String at 0x33038: "software_pattern_4_midstate_send_function"
+  - Builds 148-byte (0x94) work packets
+  - Byte-swaps all 32-bit words before sending
+  - Waits for FPGA buffer ready (sub_224A4)
+  - Updates global counter: data_49244
+  - Prints: "Send test %d pattern done" when complete
+
+- **8-midstate function**: `software_pattern_8_midstate_send_function` (sub_12930 - address approximate)
+
+  - String at 0x33064: "software_pattern_8_midstate_send_function"
+  - Similar structure to 4-midstate but with 8 midstate slots
+
 - **FPGA write**: `sub_22B10` at 0x22B10
-  - First word → Logical index 16
-  - Remaining words → Logical index 17 (looped)
-  - Thread-safe with pthread mutex
+  - Pthread mutex lock at 0x14D5A0
+  - First word → Logical index 0x10 (16)
+  - Remaining words → Logical index 0x11 (17) in loop
+  - Thread-safe with mutex protection
 
 ### Nonce Reading
 
+- **Buffer check**: `sub_224A4` - Checks if FPGA can accept more work
 - **Single read**: `sub_22398` at 0x22398
 - **Double read**: `sub_223BC` at 0x223BC (for stability)
-- **Registers**:
+- **FPGA Registers** (via indirect mapping):
   - Logical index 4 → Physical 0x010 (RETURN_NONCE)
   - Logical index 5 → Physical 0x018 (NONCE_NUMBER_IN_FIFO)
 

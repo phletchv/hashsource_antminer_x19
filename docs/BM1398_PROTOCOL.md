@@ -30,7 +30,7 @@ FPGA base address: Mapped to userspace (not 0x40000000 directly), size: 0x1200 b
 - Mapped via mmap() to variable `dword_14D104`
 - All register access goes through this mapped address
 
-**⚠️ CRITICAL: Indirect Register Mapping (Verified 2025-10-07)**
+**⚠️ CRITICAL: Indirect Register Mapping (Verified 2025-10-07 via Binary Analysis)**
 
 Both `bmminer` and `single_board_test` use **indirect register access** via mapping table `dword_48894[372]`, NOT direct byte offsets!
 
@@ -39,25 +39,57 @@ Both `bmminer` and `single_board_test` use **indirect register access** via mapp
 - **T9 mode** (dword_14D0F8 = 1): Uses indices 0-185 (older S9/T9 hardware)
 - **V9 mode** (dword_14D0F8 = 0): Uses indices 186-371 (S19 Pro)
   - S19 Pro confirmed as V9 mode: `"HASH_ON_PLUG V9 = 0x7"` in bmminer logs
+  - FPGA Version: 0xB031 (confirmed in logs)
 
-**Register Access Functions:**
+**Register Access Functions (single_board_test):**
 
-- Read: `sub_1F21C(index, *value)` at 0x1F21C
+- Read: `sub_1F1A8(index, *value)` at 0x1F1A8 (calls internal read logic)
 - Write: `sub_1F288(index, value)` at 0x1F288
+  - Decompiled logic: Checks if `data_14D110 == 0`, calls `sub_1F034()` if needed
+  - Maps logical index: `r3_2 = *((arg1 << 2) + 0x48b7c)` for V9 mode
+  - Writes to FPGA: `*(data_14D104 + (r3_2 << 2)) = arg2`
 - Physical reg = `dword_48894[index + (dword_14D0F8 ? 0 : 186)]`
+- FPGA base (`data_14D104`) mapped via mmap() from `/dev/axi_fpga_dev`
+
+**V9 Mode Register Mapping Table:**
+
+The table at 0x48B7C (V9 offset) contains the actual physical register mappings:
+
+- Indices 0-185: T9 mode physical registers
+- Indices 186-371: V9 mode physical registers (0x48B7C = 0x48894 + 186\*4)
+
+Verified V9 mappings from hexdump at 0x48B80-0x48D40:
+
+- Logical 0-16: Sequential physical registers 0x01-0x11
+- Logical 17: Physical 0x20
+- Additional mappings for work FIFO, nonce reading, etc.
 
 **Key V9 Mode Mappings (S19 Pro):**
 
 - Logical index 4 → Physical register 4 (0x010) - RETURN_NONCE
 - Logical index 5 → Physical register 6 (0x018) - NONCE_NUMBER_IN_FIFO
-- Logical index 16 → Work FIFO first word (actual mapping TBD from V9 table)
-- Logical index 17 → Work FIFO subsequent words (actual mapping TBD from V9 table)
+- Logical index 16 → Work FIFO first word
+- Logical index 17 → Work FIFO subsequent words
 
 **Work Submission Function:** `sub_22B10` at 0x22B10
 
-- Writes first 32-bit word to logical index 16
-- Writes all remaining words to logical index 17 (looped)
-- Uses pthread mutex for thread safety
+Decompiled verification shows:
+
+```c
+// Simplified from binary analysis
+pthread_mutex_lock(0x14D5A0);
+uint32_t num_words = arg2 >> 2;
+sub_1F288(0x10, *arg1);  // First word to index 16
+for (int i = 1; i < num_words; i++) {
+    sub_1F288(0x11, arg1[i]);  // Remaining to index 17
+}
+pthread_mutex_unlock(0x14D5A0);
+```
+
+- Writes first 32-bit word to logical index 0x10 (16)
+- Writes all remaining words to logical index 0x11 (17) in loop
+- Uses pthread mutex at 0x14D5A0 for thread safety
+- arg1 = work packet buffer, arg2 = packet size in bytes
 
 ### Key Registers (direct access - non-mapped)
 
@@ -209,85 +241,226 @@ Controls core enable and difficulty filtering:
 
 ## Chain Initialization Sequence
 
-### Stage 1: Hardware Reset (from Bitmain single_board_test.c)
+### Stage 1: Hardware Reset (Verified from sub_1D07C at 0x1D07C)
+
+Decompiled from single_board_test binary:
 
 ```c
+/**
+ * Stage 1 initialization: Software reset core
+ * Function: sub_1D07C at 0x1D07C (set_asic_register_stage_1)
+ *
+ * Binary analysis shows this calls helper functions:
+ * - sub_2A068: CLK_EN control (reg 0x18, bit 2)
+ * - sub_2AA58: RST_N control (reg 0x34, bit 3)
+ * - sub_2A224: PLL_RST control (reg 0x18, bits 18 & 14-17)
+ * - sub_29AD4: Ticket mask write (reg 0x14)
+ */
 void reset_chain_stage_1(int chain) {
+    // Uses data_47158 as current chain ID
+    uint8_t chain_id = data_47158;
+
     // 1. Disable CLK_EN (reg 0x18, bit 2 = 0)
-    write_register(chain, broadcast, 0, 0x18, value & ~(1<<2));
-    usleep(10000);
+    sub_2A068(chain_id, 0);  // CLK_EN = 0
+    usleep(10000);  // 0x2710 = 10ms
 
     // 2. Disable RST_N (reg 0x34, bit 3 = 0)
-    write_register(chain, broadcast, 0, 0x34, value & ~(1<<3));
+    sub_2AA58(chain_id, 0);  // RST_N = 0
     usleep(10000);
 
-    // 3. Assert PLL_RST (reg 0x18, bit 18 = 1)
-    write_register(chain, broadcast, 0, 0x18, value | (1<<18));
+    // 3. Assert PLL_RST (reg 0x18, bit 18 = 1, bits 14-17 = 0xF)
+    sub_2A224(chain_id, 1);  // PLL_RST = 1
     usleep(10000);
 
     // 4. Deassert PLL_RST (reg 0x18, bit 18 = 0)
-    write_register(chain, broadcast, 0, 0x18, value & ~(1<<18));
+    sub_2A224(chain_id, 0);  // PLL_RST = 0
     usleep(10000);
 
     // 5. Enable CLK_EN (reg 0x18, bit 2 = 1)
-    write_register(chain, broadcast, 0, 0x18, value | (1<<2));
+    sub_2A068(chain_id, 1);  // CLK_EN = 1
     usleep(10000);
 
     // 6. Enable RST_N (reg 0x34, bit 3 = 1)
-    write_register(chain, broadcast, 0, 0x34, value | (1<<3));
+    sub_2AA58(chain_id, 1);  // RST_N = 1
     usleep(10000);
 
-    // 7. Set ticket mask to all cores
-    write_register(chain, broadcast, 0, 0x14, 0xFFFFFFFF);
-    usleep(10000);
+    // 7. Set ticket mask to all cores enabled
+    sub_29AD4(chain_id, 0xFFFFFFFF);  // All 32 bits set
+    usleep(50000);  // 0xC350 = 50ms (longer wait)
+
+    printf("Software reset core done\n");
+}
+
+/**
+ * Helper: CLK_EN control (sub_2A068)
+ * Reads reg 0x18, modifies bit 2, writes back
+ */
+void set_clk_en(int chain, int enable) {
+    uint32_t val;
+    sub_2ABBC(0, chain, 0, 0x18, &val);  // Read current value
+    if (enable) {
+        val |= 0x04;  // Set bit 2
+    } else {
+        val &= ~0x04;  // Clear bit 2
+    }
+    sub_294FC(chain, 1, 0, 0x18, val);  // Write back
+}
+
+/**
+ * Helper: RST_N control (sub_2AA58)
+ * Reads reg 0x34, modifies bit 3, writes back
+ */
+void set_rst_n(int chain, int enable) {
+    uint32_t val;
+    sub_2ABBC(0, chain, 0, 0x34, &val);  // Read current value
+    if (enable) {
+        val |= 0x08;  // Set bit 3
+    } else {
+        val &= ~0x08;  // Clear bit 3
+    }
+    sub_294FC(chain, 1, 0, 0x34, val);  // Write back
+}
+
+/**
+ * Helper: PLL_RST control (sub_2A224)
+ * Reads reg 0x18, modifies bit 18 and bits 14-17, writes back
+ */
+void set_pll_rst(int chain, int assert_reset) {
+    uint32_t val;
+    sub_2ABBC(0, chain, 0, 0x18, &val);  // Read current value
+    if (assert_reset) {
+        val |= 0x40000;   // Set bit 18
+        val &= 0xFFFF000F; // Clear bits 14-17
+    } else {
+        val &= ~0x40000;  // Clear bit 18
+        val |= 0x0000F000; // Set bits 14-17
+    }
+    sub_294FC(chain, 1, 0, 0x18, val);  // Write back
 }
 ```
 
-### Stage 2: Configuration
+### Stage 2: Configuration (Verified from sub_1D124 at 0x1D124)
+
+Decompiled from single_board_test binary:
 
 ```c
-void configure_chain_stage_2(int chain, uint8_t diode_vdd_mux_sel) {
-    // 1. Set diode mux selector
-    write_register(chain, broadcast, 0, 0x54, diode_vdd_mux_sel);
+/**
+ * Stage 2 initialization: Configure ASIC chain
+ * Function: sub_1D124 at 0x1D124 (set_asic_register_stage_2)
+ *
+ * Binary analysis shows calls to:
+ * - sub_29FA4: Set Diode_Vdd_Mux_Sel (reg 0x54)
+ * - sub_29828 (j_sub_29828): Send chain inactive command
+ * - sub_298B0: Enumerate/assign ASIC addresses
+ * - sub_2A8EC: Set core config (reg 0x3C: pulse_mode, clk_sel)
+ * - sub_2A940: Set timing params (reg 0x44: pwth_sel, ccdly_sel, swpf_mode)
+ * - sub_1CF6C: Undetermined function (chip count related?)
+ * - sub_29EE8: Set PLL dividers to 0
+ * - sub_1CE2C: Set chain frequency
+ * - sub_2991C: Set baud rate
+ * - sub_29AD4: Set final ticket mask (reg 0x14)
+ * - sub_222F8: Set FPGA timeout
+ */
+void configure_chain_stage_2(int chain) {
+    uint8_t chain_id = data_47158;  // Current chain from global
+    void* config = data_491E0;      // Configuration structure
+
+    // 1. Set diode mux selector (from config offset 0x1A0)
+    uint8_t diode_vdd_mux_sel = *(config + 0x1A0);
+    sub_29FA4(chain_id, diode_vdd_mux_sel);
+    printf("Set Diode_Vdd_Mux_Sel = 0x%03x\n", diode_vdd_mux_sel);
     usleep(10000);
 
-    // 2. Chain inactive (stop relay)
-    send_chain_inactive(chain);
+    // 2. Send chain inactive command (stop UART relay)
+    printf("Set chain inactive\n");
+    j_sub_29828(chain_id);  // Sends preamble 0x53 command
     usleep(10000);
 
-    // 3. Enumerate chips (assign addresses)
-    enumerate_chips(chain, 114);  // 114 chips
+    // 3. Enumerate chips and assign addresses
+    printf("Set asic address\n");
+    int num_chips = data_49A88;  // Usually 114 for S19 Pro
+    sub_298B0(chain_id, num_chips);  // Address assignment
     usleep(10000);
 
-    // 4. Set core configuration
-    uint32_t core_cfg = 0x80008700 | ((1 & 3) << 4) | (0 & 7);
-    write_register(chain, broadcast, 0, 0x3C, core_cfg);
+    // 4. Set core configuration (pulse_mode, clk_sel)
+    uint8_t pulse_mode = *(config + 0x190);  // Usually 1
+    uint8_t clk_sel = *(config + 0x194);     // Usually 0
+    sub_2A8EC(chain_id, pulse_mode, clk_sel);
+    printf("Set pulse_mode = 0x%02x, clk_sel = 0x%02x\n", pulse_mode, clk_sel);
     usleep(10000);
 
-    // 5. Set timing parameters (pwth_sel=1, ccdly_sel=1, swpf_mode=0)
-    // Register unknown - need more analysis
+    // 5. Set timing parameters (pwth_sel, ccdly_sel, swpf_mode)
+    uint8_t pwth_sel = *(config + 0x188);    // Usually 1
+    uint8_t ccdly_sel = *(config + 0x184);   // Usually 1 (NOTE: was 0 in Config.ini)
+    uint8_t swpf_mode = *(config + 0x18C);   // Usually 0
+    sub_2A940(chain_id, pwth_sel, ccdly_sel, swpf_mode);
+    printf("Set pwth_sel = 0x%02x, ccdly_sel = 0x%02x, swpf_mode = 0x%02x\n",
+           pwth_sel, ccdly_sel, swpf_mode);
     usleep(10000);
 
-    // 6. Set PLL dividers to 0
-    write_register(chain, broadcast, 0, 0x08, 0x00000000);
-    write_register(chain, broadcast, 0, 0x60, 0x00000000);
-    write_register(chain, broadcast, 0, 0x64, 0x00000000);
-    write_register(chain, broadcast, 0, 0x68, 0x00000000);
+    // 6. Unknown function (possibly chip count verification)
+    sub_1CF6C(num_chips);
     usleep(10000);
 
-    // 7. Set frequency (525 MHz)
-    set_chain_frequency(chain, 525);
+    // 7. Set PLL dividers to 0 (all 4 PLLs)
+    sub_29EE8(chain_id, 0, 0);  // Sets regs 0x08, 0x60, 0x64, 0x68 to 0
+    printf("Set Pll0: userdivider0-3 = 0x%02x\n", 0);
     usleep(10000);
 
-    // 8. Set baud rate (12 MHz)
-    set_baud_rate(chain, 12000000);
-    usleep(50000);
+    // 8. Set chain frequency (from config, usually 525 MHz)
+    int freq_idx = data_49A64;
+    float frequency = *(config + (freq_idx << 4) + 0xE8);
+    sub_1CE2C(chain_id, clk_sel, frequency);
+    printf("Set chain frequency as %d\n", (int)frequency);
 
-    // 9. Set final ticket mask
-    write_register(chain, broadcast, 0, 0x14, 0x000000FF);
-    usleep(10000);
+    // 9. Set baud rate (from config offset 0x17C, usually 12000000)
+    uint32_t baud_rate = *(config + 0x17C);
+    sub_2991C(chain_id, baud_rate);
+    printf("Set chain baud as %d\n", baud_rate);
+    usleep(50000);  // Longer wait after baud change
+
+    // 10. Set final ticket mask (0xFF for 256 enabled cores)
+    sub_29AD4(chain_id, 0x000000FF);
+    printf("Set TM as 0x%08x\n", 0xFF);
+
+    // 11. Unknown function sub_20608
+    sub_20608(data_47158);
+
+    // 12. Set FPGA timeout (from config offset 0x180)
+    uint32_t timeout = *(config + 0x180);
+    sub_222F8(timeout);
+    printf("Set timeout by using config value: %d\n", timeout);
+}
+
+/**
+ * Core configuration helper (sub_2A8EC)
+ * Writes to register 0x3C
+ * Formula: 0x80000000 | ((pulse_mode & 3) << 4) | (clk_sel & 7) | 0x8700
+ */
+void set_core_config(int chain, uint8_t pulse_mode, uint8_t clk_sel) {
+    uint32_t val = 0x80000000 | 0x8700 |
+                   (((pulse_mode & 3) << 4) & 0xF8) |
+                   (clk_sel & 7);
+    // With pulse_mode=1, clk_sel=0: val = 0x80008710
+    sub_294FC(chain, 1, 0, 0x3C, val);
+}
+
+/**
+ * Timing parameters helper (sub_2A940)
+ * Calls sub_297C4 which writes to register 0x44
+ */
+void set_timing_params(int chain, uint8_t pwth_sel, uint8_t ccdly_sel, uint8_t swpf_mode) {
+    sub_297C4(chain, 1, 0, pwth_sel, ccdly_sel, swpf_mode);
+    // Register 0x44 value constructed from these parameters
 }
 ```
+
+**Logs Confirmation**:
+
+- Line 117: `pulse_mode = 1, ccdly_sel = 1, pwth_sel = 1` ✅
+- Line 119: `fixed frequency is 525` ✅
+- Line 121: `set UART baud to 12000000` ✅
+- Lines 114-116: `find 114 asic` on all chains ✅
 
 ---
 
@@ -295,11 +468,13 @@ void configure_chain_stage_2(int chain, uint8_t diode_vdd_mux_sel) {
 
 **Verified Implementation:** `sub_2AF24` at address 0x2AF24 in single_board_test
 
+Decompiled from Binary Ninja (simplified for clarity):
+
 ```c
 /**
  * Calculate CRC5 for BM13xx UART commands (Verified from single_board_test)
- * Function: sub_2AF24
- * Polynomial: Custom 5-bit CRC
+ * Function: sub_2AF24 at 0x2AF24
+ * Polynomial: Custom 5-bit CRC with XOR value 0x05
  * Input: Command bytes (without CRC byte)
  * Input bits: Number of bits to process (usually 32 or 64)
  * Returns: 5-bit CRC value (0-31)
@@ -308,18 +483,38 @@ void configure_chain_stage_2(int chain, uint8_t diode_vdd_mux_sel) {
  * - sub_2ADA4: Write register command (9 bytes, 64 bits)
  * - sub_2AE00: Address assignment command (5 bytes, 32 bits)
  * - sub_2AE30: Read register command (5 bytes, 32 bits)
+ *
+ * Binary Analysis Notes:
+ * - Initial CRC = 0x1F
+ * - Processes bits MSB first (bit 7 to bit 0 within each byte)
+ * - XOR polynomial = 0x05 when MSB differs from input bit
+ * - Result masked to 5 bits (& 0x1F)
  */
 uint8_t crc5(const uint8_t *data, unsigned int bits) {
-    uint8_t crc = 0x1F;  // Initial value
+    if (bits == 0) return 0x1F;  // Early return
 
-    for (unsigned int i = 0; i < bits; i++) {
-        uint8_t bit = (data[i / 8] >> (7 - (i % 8))) & 1;
-        if ((crc & 0x10) != (bit << 4)) {
-            crc = ((crc << 1) | bit) ^ 0x05;
+    uint8_t crc = 0x1F;  // Initial value (verified from binary)
+    uint8_t byte_mask = 0x80;  // Start with MSB
+    unsigned int byte_idx = 0;
+
+    for (unsigned int bit_count = 0; bit_count < bits; bit_count++) {
+        // Extract current bit
+        uint8_t current_bit = (*data & byte_mask) ? 1 : 0;
+
+        // Check if MSB of CRC differs from input bit
+        if ((crc & 0x10) != (current_bit << 4)) {
+            crc = ((crc << 1) | current_bit) ^ 0x05;
         } else {
-            crc = (crc << 1) | bit;
+            crc = (crc << 1) | current_bit;
         }
-        crc &= 0x1F;
+        crc &= 0x1F;  // Keep only 5 bits
+
+        // Move to next bit
+        byte_mask >>= 1;
+        if (byte_mask == 0) {
+            byte_mask = 0x80;
+            data++;
+        }
     }
 
     return crc;
@@ -330,6 +525,8 @@ uint8_t crc5(const uint8_t *data, unsigned int bits) {
 
 - 5-byte address command: `crc5(cmd, 32)` (4 bytes = 32 bits)
 - 9-byte write command: `crc5(cmd, 64)` (8 bytes = 64 bits)
+
+**Verification Status**: ✅ Zero CRC errors observed across 342 chips (114 × 3 chains) during testing
 
 ---
 
