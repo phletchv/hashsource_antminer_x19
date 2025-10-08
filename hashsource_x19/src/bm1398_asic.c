@@ -1182,7 +1182,9 @@ int bm1398_send_work(bm1398_context_t *ctx, int chain, uint32_t work_id,
     work.reserved[1] = 0x00;
 
     // Work ID in big-endian format
-    work.work_id = __builtin_bswap32(work_id);
+    // CRITICAL: Factory test shifts work_id left by 3 before encoding
+    // Verified from single_board_test sub_1c3b0 @ 0x1c45c: r1_1 = r4_1 << 3
+    work.work_id = __builtin_bswap32(work_id << 3);
 
     // Copy last 12 bytes of block header
     memcpy(work.work_data, work_data_12bytes, 12);

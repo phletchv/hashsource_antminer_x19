@@ -246,16 +246,18 @@ int main(int argc, char *argv[]) {
     sleep(1);  // Allow power to stabilize
     printf("\n");
 
-    // Reduce voltage to operational level (like stock firmware does)
+    // Reduce voltage to operational level (CRITICAL: must match bmminer!)
+    // bmminer log line 122: "set_voltage_by_steps to 1260" (12.6V)
+    // This is done AFTER initialization, BEFORE mining starts
     printf("====================================\n");
     printf("Reducing Voltage to Operational Level\n");
     printf("====================================\n");
-    printf("Reducing from 15.0V to 12.8V...\n");
-    if (bm1398_psu_set_voltage(&ctx, 12800) < 0) {
-        fprintf(stderr, "Warning: Failed to reduce voltage to 12.8V\n");
+    printf("Reducing from 15.0V to 12.6V (matching bmminer)...\n");
+    if (bm1398_psu_set_voltage(&ctx, 12600) < 0) {
+        fprintf(stderr, "Warning: Failed to reduce voltage to 12.6V\n");
         fprintf(stderr, "Continuing with test at 15.0V...\n");
     } else {
-        printf("Voltage reduced to 12.8V\n");
+        printf("Voltage reduced to 12.6V\n");
     }
     sleep(2);  // Allow voltage to stabilize
     printf("\n");
