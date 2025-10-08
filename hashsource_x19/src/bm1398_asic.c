@@ -151,6 +151,22 @@ int bm1398_init(bm1398_context_t *ctx) {
     ctx->initialized = true;
     ctx->num_chains = 0;
 
+    // CRITICAL: Direct register 0x080/0x088 init MUST happen FIRST
+    // Before ANY other FPGA register operations!
+    // These control fundamental FPGA mode/state
+    printf("CRITICAL: Early FPGA mode initialization...\n");
+
+    // Stage 1: Boot-time initialization
+    ctx->fpga_regs[0x080 / 4] = 0x0080800F;
+    __sync_synchronize();
+    usleep(100000);
+    printf("  Set 0x080 = 0x%08X (boot init)\n", ctx->fpga_regs[0x080 / 4]);
+
+    ctx->fpga_regs[0x088 / 4] = 0x800001C1;
+    __sync_synchronize();
+    usleep(100000);
+    printf("  Set 0x088 = 0x%08X (boot init)\n\n", ctx->fpga_regs[0x088 / 4]);
+
     // Initialize FPGA registers using INDIRECT MAPPING
     // CRITICAL: Matches bmminer and factory test initialization sequence
     // Source: Binary analysis of bmminer @ 0x45b34 and factory test @ 0x22cf0
@@ -210,34 +226,26 @@ int bm1398_init(bm1398_context_t *ctx) {
     // Direct register initialization (non-mapped registers)
     // These use direct byte offsets and are not in the mapping table
 
-    // CRITICAL: Registers 0x080 and 0x088 initialization
-    // This sequence matches fan_test.c and bmminer initialization
-    // These registers are NOT accessible via indirect mapping!
-    printf("  CRITICAL: Direct FPGA register initialization...\n");
-
-    // Stage 1: Boot-time initialization (matches fan_test.c lines 92-108)
-    ctx->fpga_regs[0x080 / 4] = 0x0080800F;
-    usleep(100000);
-    printf("  Set 0x080 = 0x%08X (boot init)\n", ctx->fpga_regs[0x080 / 4]);
-
-    ctx->fpga_regs[0x088 / 4] = 0x800001C1;
-    usleep(100000);
-    printf("  Set 0x088 = 0x%08X (boot init)\n", ctx->fpga_regs[0x088 / 4]);
-
     // Stage 2: Bmminer startup sequence (matches fan_test.c lines 114-128)
+    // These additional writes configure the FPGA for mining operation
+    printf("  Configuring FPGA for mining operation...\n");
     ctx->fpga_regs[0x080 / 4] = 0x8080800F;  // Set bit 31
+    __sync_synchronize();  // CRITICAL: Flush write to FPGA
     usleep(50000);
     printf("  Set 0x080 = 0x%08X (bit 31 set)\n", ctx->fpga_regs[0x080 / 4]);
 
     ctx->fpga_regs[0x088 / 4] = 0x00009C40;
+    __sync_synchronize();  // CRITICAL: Flush write to FPGA
     usleep(50000);
     printf("  Set 0x088 = 0x%08X\n", ctx->fpga_regs[0x088 / 4]);
 
     ctx->fpga_regs[0x080 / 4] = 0x0080800F;  // Clear bit 31
+    __sync_synchronize();  // CRITICAL: Flush write to FPGA
     usleep(50000);
     printf("  Set 0x080 = 0x%08X (bit 31 clear)\n", ctx->fpga_regs[0x080 / 4]);
 
     ctx->fpga_regs[0x088 / 4] = 0x8001FFFF;  // Final config
+    __sync_synchronize();  // CRITICAL: Flush write to FPGA
     usleep(100000);
     printf("  Set 0x088 = 0x%08X (final config)\n", ctx->fpga_regs[0x088 / 4]);
 
@@ -1199,6 +1207,18 @@ int bm1398_send_work(bm1398_context_t *ctx, int chain, uint32_t work_id,
         return -1;
     }
 
+    // CRITICAL: Wait for FPGA work FIFO space before sending
+    // Factory test checks buffer space to avoid overwhelming FPGA
+    int timeout = 1000;  // 1 second max wait
+    while (bm1398_check_work_fifo_ready(ctx) < 1 && timeout > 0) {
+        usleep(1000);  // 1ms
+        timeout--;
+    }
+    if (timeout == 0) {
+        fprintf(stderr, "Error: Work FIFO timeout on chain %d\n", chain);
+        return -1;
+    }
+
     // Build work packet (148 bytes = 0x94)
     work_packet_t work;
     memset(&work, 0, sizeof(work));
@@ -1208,10 +1228,11 @@ int bm1398_send_work(bm1398_context_t *ctx, int chain, uint32_t work_id,
     work.reserved[0] = 0x00;
     work.reserved[1] = 0x00;
 
-    // Work ID in big-endian format
-    // CRITICAL: Factory test shifts work_id left by 3 before encoding
-    // Verified from single_board_test sub_1c3b0 @ 0x1c45c: r1_1 = r4_1 << 3
-    work.work_id = __builtin_bswap32(work_id << 3);
+    // Work ID: Shift left by 3, then store in native byte order
+    // Will be byte-swapped later with all other fields
+    // CRITICAL FIX: Don't pre-swap work_id, let the global swap handle it
+    // Factory test: work_id << 3, then whole packet byte-swapped
+    work.work_id = work_id << 3;
 
     // Copy last 12 bytes of block header
     memcpy(work.work_data, work_data_12bytes, 12);
@@ -1221,8 +1242,9 @@ int bm1398_send_work(bm1398_context_t *ctx, int chain, uint32_t work_id,
         memcpy(work.midstate[i], midstates[i], 32);
     }
 
-    // Byte-swap all 32-bit words in the packet (big-endian)
+    // Byte-swap all 32-bit words in the packet to big-endian
     // Total: 148 bytes / 4 = 37 words
+    // This swaps work_id, work_data, and midstates to network byte order
     uint32_t *words = (uint32_t *)&work;
     for (int i = 0; i < sizeof(work) / 4; i++) {
         words[i] = __builtin_bswap32(words[i]);
@@ -1275,6 +1297,9 @@ int bm1398_get_nonce_count(bm1398_context_t *ctx) {
  * Read single nonce from FPGA FIFO
  *
  * Source: Bitmain single_board_test.c get_return_nonce
+ *
+ * CRITICAL FIX: Nonce FIFO returns 32-bit value, not 64-bit
+ * Factory test reads single register for nonce data
  */
 int bm1398_read_nonce(bm1398_context_t *ctx, nonce_response_t *nonce) {
     if (!ctx || !ctx->initialized || !nonce) {
@@ -1283,29 +1308,20 @@ int bm1398_read_nonce(bm1398_context_t *ctx, nonce_response_t *nonce) {
 
     volatile uint32_t *regs = ctx->fpga_regs;
 
-    // Read nonce data (64-bit value from 2 registers)
-    uint32_t nonce_low = regs[REG_RETURN_NONCE];
-    uint32_t nonce_high = regs[REG_RETURN_NONCE + 1];
+    // Read nonce data from FIFO (single 32-bit register read)
+    // Each FIFO read pops one entry from the nonce queue
+    uint32_t nonce_data = regs[REG_RETURN_NONCE];
 
-    // Parse nonce response
-    // Format (from BM1398_PROTOCOL.md):
-    // Bit 31: WORK_ID_OR_CRC indicator
-    // Bit 7: NONCE_INDICATOR (valid nonce present)
-    // Bits [3:0]: Chain number
+    // Parse nonce response format from FPGA
+    // The exact format depends on FPGA implementation
+    // For now, store raw value and extract what we can
+    nonce->nonce = nonce_data;
+    nonce->chain_id = (nonce_data >> 0) & 0xF;   // Bits [3:0]: chain
+    nonce->work_id = (nonce_data >> 8) & 0xFF;    // Bits [15:8]: work_id (needs verification)
+    nonce->chip_id = (nonce_data >> 16) & 0xFF;   // Bits [23:16]: chip (needs verification)
+    nonce->core_id = 0;  // Core ID encoding TBD
 
-    if (nonce_low & NONCE_INDICATOR) {
-        nonce->chain_id = NONCE_CHAIN_NUMBER(nonce_low);
-        nonce->nonce = nonce_low;  // Full 32-bit nonce value
-        nonce->work_id = (nonce_high >> 16) & 0x7FFF;  // Work ID from high word
-
-        // TODO: Parse chip_id and core_id from response
-        nonce->chip_id = 0;
-        nonce->core_id = 0;
-
-        return 1;  // Successfully read nonce
-    }
-
-    return 0;  // No valid nonce
+    return 1;  // Successfully read nonce
 }
 
 /**

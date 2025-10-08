@@ -11,6 +11,7 @@ Here is the bmminer binary, with Ghidra, and IDA Pro decompilations and assembly
 /home/danielsokil/Downloads/Bitmain_Peek/S19_Pro/Antminer-S19-Pro-merge-release-20221226124238/Antminer S19 Pro/zynq7007_NBP1901/update/minerfs.no_header.image_extract/usr/bin
 
 Here is also single_board_test, the Bitmain test fixture tool used to test a hashboard, and perform pattern testing
+When single_board_test is ran, it assumes the connected hashboard is already receiving power, however in our case we need to power on the PSU as bmminer does, and then power off once done testing.
 
 /home/danielsokil/Downloads/Bitmain_Test_Fixtures/S19_Pro
 
