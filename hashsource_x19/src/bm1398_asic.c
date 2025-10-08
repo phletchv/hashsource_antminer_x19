@@ -447,22 +447,61 @@ int bm1398_read_modify_write_register(bm1398_context_t *ctx, int chain,
 int bm1398_reset_chain_stage1(bm1398_context_t *ctx, int chain) {
     printf("Stage 1: Hardware reset chain %d...\n", chain);
 
-    // Simplified hardware reset using known good values
-    // Note: Register reads don't work reliably during early initialization,
-    // so we use direct writes with known values from factory test code
+    // Hardware reset sequence verified from Binary Ninja analysis
+    // Source: Bitmain single_board_test.c sub_1d07c @ 0x1d07c
 
-    printf("  Performing software reset sequence...\n");
-    // The factory code does a simplified reset via ticket mask only
-    // Full hardware reset may not be necessary or may happen automatically
+    // Step 1: Soft reset disable (register 0x18 bit 2 clear)
+    printf("  Soft reset disable (reg 0x18)...\n");
+    uint32_t reg18 = 0;
+    bm1398_read_register(ctx, chain, false, 0, ASIC_REG_CLK_CTRL, &reg18, 100);
+    reg18 &= ~0x0400;  // Clear bit 2 of BYTE1 (bit 10 overall)
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, reg18);
+    usleep(10000);
 
-    // Set ticket mask to all cores enabled (initialization value)
+    // Step 2: Clear power control bit (register 0x34 bit 3)
+    printf("  Clear power control bit (reg 0x34)...\n");
+    uint32_t reg34 = 0;
+    bm1398_read_register(ctx, chain, false, 0, ASIC_REG_RESET_CTRL, &reg34, 100);
+    reg34 &= ~0x08;  // Clear bit 3
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_RESET_CTRL, reg34);
+    usleep(10000);
+
+    // Step 3: Core reset enable (register 0x18 BYTE2 |= 0x40, HIBYTE &= 0x0F)
+    printf("  Core reset enable (reg 0x18)...\n");
+    bm1398_read_register(ctx, chain, false, 0, ASIC_REG_CLK_CTRL, &reg18, 100);
+    reg18 = (reg18 | 0x00400000) & 0x0FFFFFFF;  // BYTE2 |= 0x40, HIBYTE &= 0x0F
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, reg18);
+    usleep(10000);
+
+    // Step 4: Core reset disable (register 0x18 BYTE2 &= ~0x40, HIBYTE |= 0xF0)
+    printf("  Core reset disable (reg 0x18)...\n");
+    bm1398_read_register(ctx, chain, false, 0, ASIC_REG_CLK_CTRL, &reg18, 100);
+    reg18 = (reg18 & ~0x00400000) | 0xF0000000;  // BYTE2 &= ~0x40, HIBYTE |= 0xF0
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, reg18);
+    usleep(10000);
+
+    // Step 5: Soft reset enable (register 0x18 bit 2 set)
+    printf("  Soft reset enable (reg 0x18)...\n");
+    bm1398_read_register(ctx, chain, false, 0, ASIC_REG_CLK_CTRL, &reg18, 100);
+    reg18 |= 0x0400;  // Set bit 2 of BYTE1 (bit 10 overall)
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, reg18);
+    usleep(10000);
+
+    // Step 6: Set power control bit (register 0x34 bit 3)
+    printf("  Set power control bit (reg 0x34)...\n");
+    bm1398_read_register(ctx, chain, false, 0, ASIC_REG_RESET_CTRL, &reg34, 100);
+    reg34 |= 0x08;  // Set bit 3
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_RESET_CTRL, reg34);
+    usleep(10000);
+
+    // Step 7: Set ticket mask to all cores enabled (initialization value)
     printf("  Setting ticket mask to 0xFFFFFFFF...\n");
     if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_TICKET_MASK,
                               TICKET_MASK_ALL_CORES) < 0) {
         fprintf(stderr, "Error: Failed to set ticket mask\n");
         return -1;
     }
-    usleep(10000);
+    usleep(50000);  // 50ms settle time
 
     printf("  Stage 1 complete\n");
     return 0;
@@ -494,7 +533,16 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     }
     usleep(10000);
 
-    // 3. Enumerate chips
+    // 3. Set LOW baud rate (115200) for chip enumeration
+    // CRITICAL: Chip enumeration MUST happen at low speed!
+    printf("  Setting LOW baud rate (115200) for enumeration...\n");
+    if (bm1398_set_baud_rate(ctx, chain, 115200) < 0) {
+        fprintf(stderr, "Error: Failed to set low baud rate\n");
+        return -1;
+    }
+    usleep(50000);
+
+    // 4. Enumerate chips
     printf("  Enumerating chips...\n");
     int num_chips = ctx->chips_per_chain[chain];
     if (bm1398_enumerate_chips(ctx, chain, num_chips) < 0) {
@@ -503,7 +551,26 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     }
     usleep(10000);
 
-    // 4. Set core configuration (pulse_mode=1, clk_sel=0)
+    // 5. CRITICAL: Register 0x3C reset sequence BEFORE pulse_mode config
+    // Source: Binary Ninja sub_2959c @ 0x2959c - MUST DO THIS!
+    printf("  Core config reset sequence (reg 0x3C)...\n");
+    printf("    Step 1: Write 0x8000851F...\n");
+    if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CORE_CONFIG,
+                              0x8000851F) < 0) {
+        fprintf(stderr, "Error: Failed core reset step 1\n");
+        return -1;
+    }
+    usleep(10000);
+
+    printf("    Step 2: Write 0x80000600...\n");
+    if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CORE_CONFIG,
+                              0x80000600) < 0) {
+        fprintf(stderr, "Error: Failed core reset step 2\n");
+        return -1;
+    }
+    usleep(10000);
+
+    // 6. Set core configuration (pulse_mode=1, clk_sel=0)
     uint32_t core_cfg = CORE_CONFIG_BASE | ((1 & 3) << CORE_CONFIG_PULSE_MODE_SHIFT) | (0 & CORE_CONFIG_CLK_SEL_MASK);
     printf("  Setting core config = 0x%08X...\n", core_cfg);
     if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CORE_CONFIG,
@@ -513,10 +580,10 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     }
     usleep(10000);
 
-    // 4b. Set core timing parameters (pwth_sel=1, ccdly_sel=0, swpf_mode=0)
-    // From Config.ini: Pwth_Sel=1, CCdly_Sel=0
+    // 7. Set core timing parameters (pwth_sel=1, ccdly_sel=1, swpf_mode=0)
+    // FIXED: ccdly_sel=1 (verified from bmminer log line 441)
     uint8_t pwth_sel = 1;
-    uint8_t ccdly_sel = 0;
+    uint8_t ccdly_sel = 1;  // FIXED: was 0, must be 1
     uint8_t swpf_mode = 0;
     uint32_t core_param = ((pwth_sel & CORE_PARAM_PWTH_SEL_MASK) << CORE_PARAM_PWTH_SEL_SHIFT) |
                           ((ccdly_sel & CORE_PARAM_CCDLY_SEL_MASK) << CORE_PARAM_CCDLY_SEL_SHIFT);
@@ -556,14 +623,16 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     // 6. Set frequency (525 MHz)
     printf("  Setting frequency to %d MHz...\n", FREQUENCY_525MHZ);
     if (bm1398_set_frequency(ctx, chain, FREQUENCY_525MHZ) < 0) {
-        fprintf(stderr, "Warning: Frequency set failed (not implemented yet)\n");
+        fprintf(stderr, "Warning: Frequency set failed\n");
     }
     usleep(10000);
 
-    // 7. Set baud rate (12 MHz)
-    printf("  Setting baud rate to %d Hz...\n", BAUD_RATE_12MHZ);
+    // 7. Set HIGH baud rate (12 MHz) AFTER frequency configuration
+    // This is phase 2 of two-phase baud rate setup
+    printf("  Setting HIGH baud rate (%d Hz) after frequency config...\n", BAUD_RATE_12MHZ);
     if (bm1398_set_baud_rate(ctx, chain, BAUD_RATE_12MHZ) < 0) {
-        fprintf(stderr, "Warning: Baud rate set failed (not fully implemented)\n");
+        fprintf(stderr, "Error: Failed to set high baud rate\n");
+        return -1;
     }
     usleep(50000);
 
@@ -689,48 +758,105 @@ int bm1398_set_baud_rate(bm1398_context_t *ctx, int chain, uint32_t baud_rate) {
     }
 
     uint32_t baud_div;
+    uint32_t reg_val;
 
     if (baud_rate > 3000000) {
         // High-speed mode (>3 MHz) - uses 400 MHz base clock from PLL3
+        // Source: Binary Ninja sub_2991c @ 0x2991c
 
-        // Configure PLL3 register (0x68)
-        printf("    Configuring PLL3 for high-speed UART...\n");
-        bm1398_write_register(ctx, chain, true, 0, ASIC_REG_PLL_PARAM_3, 0xC0700111);
-        usleep(10000);
-
-        // Configure BAUD_CONFIG register (0x28)
-        printf("    Configuring high-speed baud register...\n");
-        bm1398_write_register(ctx, chain, true, 0, ASIC_REG_BAUD_CONFIG, 0x06008F00);
-        usleep(10000);
+        printf("    HIGH-SPEED baud mode (>3MHz)...\n");
 
         // Calculate divisor: 400MHz / (baud * 8) - 1
         baud_div = (400000000 / (baud_rate * 8)) - 1;
-        printf("    Baud divisor (high-speed): %u\n", baud_div);
+        printf("    Baud divisor (high-speed): %u (0x%X)\n", baud_div, baud_div);
+
+        // Step 1: Configure PLL3 register (0x68) - Read-Modify-Write
+        printf("    Configuring PLL3 (reg 0x68) for 400MHz UART clock...\n");
+        if (bm1398_read_register(ctx, chain, false, 0, ASIC_REG_PLL_PARAM_3, &reg_val, 100) == 0) {
+            // Modify: set specific bits for high-speed UART PLL
+            // Verified pattern from Binary Ninja: enables 400MHz output
+            reg_val = (reg_val & 0xFFFF0000) | 0x0111;  // Set lower bits for PLL config
+            reg_val |= 0xC0700000;                       // Set upper bits for enable
+            bm1398_write_register(ctx, chain, true, 0, ASIC_REG_PLL_PARAM_3, reg_val);
+        } else {
+            // Fallback to known good value if read fails
+            bm1398_write_register(ctx, chain, true, 0, ASIC_REG_PLL_PARAM_3, 0xC0700111);
+        }
+        usleep(10000);
+
+        // Step 2: Configure BAUD_CONFIG register (0x28) - Read-Modify-Write
+        printf("    Configuring BAUD_CONFIG (reg 0x28) for high-speed mode...\n");
+        if (bm1398_read_register(ctx, chain, false, 0, ASIC_REG_BAUD_CONFIG, &reg_val, 100) == 0) {
+            // Modify bits for high-speed UART mode
+            // Byte 0: Set to 0x0F (base config)
+            // Byte 1: Set bit 7, keep lower bits
+            // Byte 2: Set to 0x06 (high-speed mode selector)
+            reg_val = (reg_val & 0xFF000000) |  // Keep byte 3
+                      0x0000000F |               // Byte 0: 0x0F
+                      ((((reg_val >> 8) | 0x80) & 0x8F) << 8) |  // Byte 1: set bit 7
+                      (((reg_val >> 16) & 0x30) | 0x06) << 16;   // Byte 2: 0x06
+            bm1398_write_register(ctx, chain, true, 0, ASIC_REG_BAUD_CONFIG, reg_val);
+        } else {
+            // Fallback to known good value if read fails
+            bm1398_write_register(ctx, chain, true, 0, ASIC_REG_BAUD_CONFIG, 0x06008F0F);
+        }
+        usleep(10000);
+
+        // Step 3: Configure CLK_CTRL register (0x18) with divisor + high-speed bit
+        printf("    Writing CLK_CTRL (reg 0x18) with divisor and high-speed bit...\n");
+        if (bm1398_read_register(ctx, chain, false, 0, ASIC_REG_CLK_CTRL, &reg_val, 100) < 0) {
+            fprintf(stderr, "Error: Failed to read CLK_CTRL\n");
+            return -1;
+        }
+
+        // Modify register 0x18 for high-speed mode:
+        // Byte 3 (bits 31-24): Keep upper 4 bits, set lower 4 bits to (divisor >> 5) & 0xF
+        // Byte 1 (bits 15-8): Keep upper 3 bits, set lower 5 bits to divisor & 0x1F
+        // Byte 2 (bits 23-16): SET bit 0 for high-speed mode
+        reg_val = (reg_val & 0xF000E000) |              // Keep bits 31-28, 15-13
+                  (((baud_div >> 5) & 0xF) << 24) |     // Bits 27-24: upper divisor
+                  ((baud_div & 0x1F) << 8) |            // Bits 12-8: lower divisor
+                  0x00010000;                           // Bit 16: high-speed enable
+
+        if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, reg_val) < 0) {
+            fprintf(stderr, "Error: Failed to write CLK_CTRL (high-speed)\n");
+            return -1;
+        }
+
     } else {
-        // Standard mode (<= 3 MHz) - uses 25 MHz base clock
+        // Low-speed mode (<= 3 MHz) - uses 25 MHz base clock
+        // Source: Binary Ninja sub_2991c @ 0x2991c
+
+        printf("    LOW-SPEED baud mode (<=3MHz)...\n");
+
+        // Calculate divisor: 25MHz / (baud * 8) - 1
         baud_div = (25000000 / (baud_rate * 8)) - 1;
-        printf("    Baud divisor (standard): %u\n", baud_div);
-    }
+        printf("    Baud divisor (low-speed): %u (0x%X)\n", baud_div, baud_div);
 
-    // Write baud divisor to CLK_CTRL register (0x18)
-    // Using known good value from factory test: includes baud div + bit 16 set
-    // Bits [11:8] = upper 4 bits of divisor, bits [4:0] = lower 5 bits
-    printf("    Writing CLK_CTRL register with baud configuration...\n");
+        // Configure CLK_CTRL register (0x18) with divisor, clear high-speed bit
+        printf("    Writing CLK_CTRL (reg 0x18) with divisor, low-speed mode...\n");
+        if (bm1398_read_register(ctx, chain, false, 0, ASIC_REG_CLK_CTRL, &reg_val, 100) < 0) {
+            fprintf(stderr, "Error: Failed to read CLK_CTRL\n");
+            return -1;
+        }
 
-    // Build CLK_CTRL value: base value + baud divisor
-    // Base value preserves other critical bits
-    uint32_t clk_ctrl_value = 0x00010000 |  // Bit 16 set
-                              ((baud_div & 0x1E0) << 3) |  // Upper bits [11:8]
-                              (baud_div & 0x1F);            // Lower bits [4:0]
+        // Modify register 0x18 for low-speed mode:
+        // Byte 3 (bits 31-24): Keep upper 4 bits, set lower 4 bits to (divisor >> 5) & 0xF
+        // Byte 1 (bits 15-8): Keep upper 3 bits, set lower 5 bits to divisor & 0x1F
+        // Byte 2 (bits 23-16): CLEAR bit 0 for low-speed mode
+        reg_val = (reg_val & 0xF000E000) |              // Keep bits 31-28, 15-13
+                  (((baud_div >> 5) & 0xF) << 24) |     // Bits 27-24: upper divisor
+                  ((baud_div & 0x1F) << 8);             // Bits 12-8: lower divisor
+        reg_val &= ~0x00010000;                         // Bit 16: clear high-speed bit
 
-    if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL,
-                              clk_ctrl_value) < 0) {
-        fprintf(stderr, "Error: Failed to write CLK_CTRL\n");
-        return -1;
+        if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, reg_val) < 0) {
+            fprintf(stderr, "Error: Failed to write CLK_CTRL (low-speed)\n");
+            return -1;
+        }
     }
 
     usleep(50000);  // 50ms settle time for baud rate change
-    printf("    Baud rate configuration complete\n");
+    printf("    Baud rate %u Hz configuration complete\n", baud_rate);
     return 0;
 }
 
@@ -748,7 +874,7 @@ int bm1398_set_frequency(bm1398_context_t *ctx, int chain, uint32_t freq_mhz) {
     printf("    Setting frequency to %u MHz...\n", freq_mhz);
 
     // PLL configuration for BM1398
-    // Formula: freq = CLKI * fbdiv / (refdiv * (postdiv1+1) * (postdiv2+1))
+    // Formula: freq = CLKI * fbdiv / (refdiv * postdiv1 * postdiv2)
     // Where CLKI = 25 MHz
     // VCO = CLKI / refdiv * fbdiv (must be 1600-3200 MHz)
 
@@ -757,18 +883,19 @@ int bm1398_set_frequency(bm1398_context_t *ctx, int chain, uint32_t freq_mhz) {
 
     // For 525 MHz (standard BM1398 frequency):
     // VCO = 25 * 84 = 2100 MHz
-    // freq = 2100 / (2 * 2) = 525 MHz
+    // freq = 2100 / (1 * 2 * 2) = 525 MHz
+    // FIXED: postdiv1=2, postdiv2=2 (was 1, 1)
     if (freq_mhz == 525) {
         refdiv = 1;
         fbdiv = 84;
-        postdiv1 = 1;  // Divide by 2
-        postdiv2 = 1;  // Divide by 2
+        postdiv1 = 2;  // FIXED: was 1
+        postdiv2 = 2;  // FIXED: was 1
     } else {
         fprintf(stderr, "    Warning: Frequency %u MHz not supported, using 525 MHz\n", freq_mhz);
         refdiv = 1;
         fbdiv = 84;
-        postdiv1 = 1;
-        postdiv2 = 1;
+        postdiv1 = 2;
+        postdiv2 = 2;
     }
 
     // Calculate VCO frequency for range check
@@ -776,13 +903,14 @@ int bm1398_set_frequency(bm1398_context_t *ctx, int chain, uint32_t freq_mhz) {
     printf("    PLL config: refdiv=%u, fbdiv=%u, postdiv1=%u, postdiv2=%u (VCO=%.0f MHz)\n",
            refdiv, fbdiv, postdiv1, postdiv2, vco);
 
-    // Build PLL register value (from factory test set_pllparameter-001cacb0.c)
-    // Bits: [31:30]=VCO range, [29]=reserved, [28]=VCO_mode, [27:16]=fbdiv, [13:8]=postdiv1, [6:4]=refdiv-1, [2:0]=postdiv2-1
-    uint32_t pll_value = 0x40000000 |  // Base value
-                         ((postdiv2 - 1) & 0x7) |
-                         (((refdiv - 1) & 0x7) << 4) |
-                         ((postdiv1 & 0x3f) << 8) |
-                         ((fbdiv & 0xfff) << 16);
+    // Build PLL register value (from Binary Ninja analysis)
+    // FIXED: NO -1 subtraction! Values are used directly
+    // Format: [31:30]=0x40, [27:16]=fbdiv, [13:8]=postdiv1, [7:4]=refdiv, [2:0]=postdiv2
+    uint32_t pll_value = 0x40000000 |           // Base value
+                         (postdiv2 & 0x7) |      // FIXED: no -1
+                         ((refdiv & 0x3F) << 8) |   // FIXED: shifted to bits [13:8]
+                         ((postdiv1 & 0x7) << 4) |  // FIXED: shifted to bits [6:4]
+                         ((fbdiv & 0xFFF) << 16);
 
     // Set VCO range bit based on VCO frequency
     if (vco >= 2400.0f && vco <= 3200.0f) {
@@ -792,7 +920,7 @@ int bm1398_set_frequency(bm1398_context_t *ctx, int chain, uint32_t freq_mhz) {
         return -1;
     }
 
-    printf("    Writing PLL0 register 0x08 = 0x%08X\n", pll_value);
+    printf("    Writing PLL0 register 0x08 = 0x%08X (expected 0x40540122)\n", pll_value);
 
     // Write PLL0 parameter to register 0x08 (broadcast to all chips)
     if (bm1398_write_register(ctx, chain, true, 0, 0x08, pll_value) < 0) {
