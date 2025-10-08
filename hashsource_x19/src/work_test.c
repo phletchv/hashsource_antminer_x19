@@ -81,11 +81,48 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Initialize the chain (if not already done)
+    // Power on PSU
+    printf("====================================\n");
+    printf("Powering On PSU\n");
+    printf("====================================\n");
+    printf("Voltage: 15.0V\n");
+    if (bm1398_psu_power_on(&ctx, 15000) < 0) {
+        fprintf(stderr, "Error: Failed to power on PSU\n");
+        bm1398_cleanup(&ctx);
+        return 1;
+    }
+    printf("PSU powered on\n\n");
+
+    // Enable hashboard DC-DC converter
+    printf("====================================\n");
+    printf("Enabling Hashboard DC-DC Converter\n");
+    printf("====================================\n");
+    if (bm1398_enable_dc_dc(&ctx, chain) < 0) {
+        printf("Note: DC-DC enable failed (may already be enabled from previous run)\n");
+        printf("Continuing with test...\n");
+    }
+    sleep(1);  // Allow power to stabilize
+    printf("\n");
+
+    // Initialize the chain
     printf("Initializing chain %d...\n", chain);
     if (bm1398_init_chain(&ctx, chain) < 0) {
         fprintf(stderr, "Warning: Chain initialization failed (may already be initialized)\n");
     }
+
+    // Reduce voltage to operational level (CRITICAL: must match bmminer!)
+    printf("====================================\n");
+    printf("Reducing Voltage to Operational Level\n");
+    printf("====================================\n");
+    printf("Reducing from 15.0V to 12.6V (matching bmminer)...\n");
+    if (bm1398_psu_set_voltage(&ctx, 12600) < 0) {
+        fprintf(stderr, "Warning: Failed to reduce voltage to 12.6V\n");
+        fprintf(stderr, "Continuing with test at 15.0V...\n");
+    } else {
+        printf("Voltage reduced to 12.6V\n");
+    }
+    sleep(2);  // Allow voltage to stabilize
+    printf("\n")
 
     printf("\n");
     printf("====================================\n");

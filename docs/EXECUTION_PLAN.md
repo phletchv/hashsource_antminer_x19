@@ -10,11 +10,11 @@ Here is the bmminer binary, with Ghidra, and IDA Pro decompilations and assembly
 
 /home/danielsokil/Downloads/Bitmain_Peek/S19_Pro/Antminer-S19-Pro-merge-release-20221226124238/Antminer S19 Pro/zynq7007_NBP1901/update/minerfs.no_header.image_extract/usr/bin
 
-Here is also single_board_test, the bimain test fixture tool used to test a hashboard, and perform pattern testing
+Here is also single_board_test, the Bitmain test fixture tool used to test a hashboard, and perform pattern testing
 
 /home/danielsokil/Downloads/Bitmain_Test_Fixtures/S19_Pro
 
-We also have the binary_ninja_mcp MCP server available with single_board_test and bmminer binaries lodaed and ready for analysis.
+We also have the binary_ninja_mcp MCP server available with single_board_test and bmminer binaries loaded and ready for analysis.
 
 Here are also logs from bmminer that may be useful to understand how it works:
 
@@ -34,13 +34,23 @@ We are reimplementing bmminer and single_board_test, here is our current source 
 /home/danielsokil/Lab/HashSource/hashsource_antminer_x19/hashsource_x19/src/pattern_test.c
 /home/danielsokil/Lab/HashSource/hashsource_antminer_x19/hashsource_x19/src/work_test.c
 
-The goal is to get at least one hashbaord hashing, chain 0
+The goal is to get at least one hashboard hashing, chain 0, use the docs we have and the Bitmain binaries to achieve that goal.
 
 I need you to analyze our correct source code, and figure out what details we are missing, compared to the Bitmain binaries.
 You also need to verify every detail, FPGA registers, initialization code, work generation, pattern testing code compared to BM1398_PROTOCOL doc, PATTERN_TEST doc, and bmminer, single_board_test binaries.
+
+These programs have been verified to be working, use them as reference to understand fan and PSU controls.
+Verify in our pattern test program and work submission that the PSU is enabled and powered on properly, otherwise the hashboard and ASICs won't respond.
+
+/home/danielsokil/Lab/HashSource/hashsource_antminer_x19/hashsource_x19/src/fan_test.c
+/home/danielsokil/Lab/HashSource/hashsource_antminer_x19/hashsource_x19/src/psu_test.c
 
 Don't create new documents with your analysis, fix our code directly.
 When writing code, the code should be concise, pragmatic, maintainable, idiomatic, modern, type-safe, secure and performant.
 
 Once you make your corrections, rebuild the code, and deploy to the HashSource machine and test it.
 /home/danielsokil/Lab/HashSource/hashsource_antminer_x19/docs/TEST_MACHINES.md
+
+We are using buildroot to build the firmware and compile the code, check the Makefile to understand how to rebuild the code:
+/home/danielsokil/Lab/HashSource/hashsource_antminer_x19/Makefile
+/home/danielsokil/Lab/HashSource/hashsource_antminer_x19/hashsource_x19/Makefile

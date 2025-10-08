@@ -216,13 +216,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Initialize chain
-    printf("Initializing chain %d...\n\n", chain);
-    if (bm1398_init_chain(&ctx, chain) < 0) {
-        fprintf(stderr, "Warning: Chain initialization failed\n");
-    }
-
-    // Power on PSU
+    // Power on PSU BEFORE chain initialization (matches bmminer sequence)
     printf("====================================\n");
     printf("Powering On PSU\n");
     printf("====================================\n");
@@ -235,7 +229,7 @@ int main(int argc, char *argv[]) {
     }
     printf("PSU powered on\n\n");
 
-    // Enable hashboard DC-DC converter (may already be enabled)
+    // Enable hashboard DC-DC converter BEFORE chain initialization
     printf("====================================\n");
     printf("Enabling Hashboard DC-DC Converter\n");
     printf("====================================\n");
@@ -245,6 +239,12 @@ int main(int argc, char *argv[]) {
     }
     sleep(1);  // Allow power to stabilize
     printf("\n");
+
+    // Initialize chain AFTER power is stable
+    printf("Initializing chain %d...\n\n", chain);
+    if (bm1398_init_chain(&ctx, chain) < 0) {
+        fprintf(stderr, "Warning: Chain initialization failed\n");
+    }
 
     // Reduce voltage to operational level (CRITICAL: must match bmminer!)
     // bmminer log line 122: "set_voltage_by_steps to 1260" (12.6V)
